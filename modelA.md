@@ -34,7 +34,7 @@ $$
 C_{i,j}^{(new)} = (1 - \alpha) \cdot C_{i,j}^{(old)} + \alpha \cdot (z_i \cdot z_j)
 $$
 
-where $$ \(\alpha = \min\left(0.1, \frac{1}{1 + N_{\text{schools}}}\right)\) $$ is the adaptive learning rate.
+where $ \(\alpha = \min\left(0.1, \frac{1}{1 + N_{\text{schools}}}\right)\) $ is the adaptive learning rate.
 
 ### 3. **Conditional Prediction for Partial Data**
 For a school with observed grades \(a\) and unobserved grades \(b\), the conditional distribution is:
@@ -77,4 +77,4 @@ $$
 \mathbf{x} \sim \mathcal{N}(\boldsymbol{\mu}, \Sigma), \quad \Sigma_{i,j} = C_{i,j} \sigma_i \sigma_j
 $$
 
-with parameters $$ \((\boldsymbol{\mu}, \Sigma)\) $$ updated adaptively as data arrives. The model uses Bayesian-inspired online updates for means/variances and a heuristic correlation update rule.
+with parameters $ \((\boldsymbol{\mu}, \Sigma)\) $ updated adaptively as data arrives. The model uses Bayesian-inspired online updates for means/variances and a heuristic correlation update rule.
