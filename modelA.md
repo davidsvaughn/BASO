@@ -1,3 +1,5 @@
+see: [this](https://chat.deepseek.com/a/chat/s/6c840e55-3446-47bd-b6d6-273580e36e65)
+
 The code implements an adaptive Bayesian model for school testing optimization, using a multivariate normal distribution with incrementally updated parameters. Here are the key equations and components:
 
 ### 1. **Grade-Level Distributions**

@@ -1,3 +1,5 @@
+see: [this](https://chatgpt.com/c/67ca0bd5-8538-8011-a841-9d202c6eee8d)
+
 # Adaptive Bayesian Testing Strategy
 
 Below is a concise mathematical description of the statistical assumptions and updates used by this model. In broad terms, the code posits that:
