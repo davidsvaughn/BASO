@@ -117,13 +117,14 @@ Suppose for a particular school we have observed *some subset* $O\subset \{1,\do
 
 Because we assume a multivariate normal model on $\mathbf{X}=(X_1,\dots,X_G)$, the conditional distribution of $\mathbf{X}_U$ given $\mathbf{X}_O = \mathbf{x}_O$ is also normal:
 
-$$
-\mathbf{X}_U \mid \mathbf{X}_O = \mathbf{x}_O \sim \mathcal{N}\Bigl(\,\boldsymbol{\mu}_{U|O},\boldsymbol{\Sigma}_{U|O}\Bigr)
-$$
 
 DEBUG:
 $$
 \mathrm{Cov}(X_i,\,X_j) \;=\; \rho_{ij}\,\sigma_i\,\sigma_j.
+$$
+
+$$
+\mathbf{X}_U \mid \mathbf{X}_O = \mathbf{x}_O \sim \mathcal{N}\Bigl(\,\boldsymbol{\mu}_{U|O},\boldsymbol{\Sigma}_{U|O}\Bigr)
 $$
 
 where (in the *unstandardized* space):
