@@ -5,13 +5,9 @@ BASO : Bayesian Adaptive Sampling for Optimization
 import numpy as np
 import matplotlib.pyplot as plt
 import random
-# import pandas as pd
-# from scipy import stats
-# from scipy.stats import multivariate_normal
-# from sklearn.preprocessing import StandardScaler
 
 class AdaptiveSchoolTestingModel:
-    def __init__(self, num_grades=12, initial_uncertainty=0.5, min_confidence=0.95):
+    def __init__(self, num_grades=12, initial_uncertainty=0.5, min_confidence=0.95, scale=100):
         """
         Initialize the adaptive statistical model for school testing optimization.
         
@@ -36,7 +32,7 @@ class AdaptiveSchoolTestingModel:
         
         # Tracking grade-specific information
         self.grade_means = np.zeros(num_grades)
-        self.grade_stds = np.ones(num_grades) * initial_uncertainty * 100  # Initial wide uncertainty
+        self.grade_stds = np.ones(num_grades) * initial_uncertainty * scale  # Initial wide uncertainty
         self.grade_sample_counts = np.zeros(num_grades, dtype=int)
         
         # Correlation matrix starts with moderate assumed correlations
@@ -816,63 +812,7 @@ def simulate_testing_scenario(num_schools=100, num_grades=12, true_correlation=0
                         'probability_exceed': eval_result['probability_exceed'],
                         'confidence': eval_result['confidence']
                     })
-                    
-    #-----------------------------------------------------------------------------------------------------------------
-    # ORIGINAL CODE
-    # # Tracking variables
-    # total_tests_conducted = 0
-    # tests_saved = 0
-    # current_school_index = 0
-    # correctly_identified_best = False
-    # all_tested_averages = []
-    # testing_decisions = []
-    
-    # # Start testing process
-    # while current_school_index < num_schools:
-    #     school = true_scores[current_school_index]
-    #     school_id = school['school_id']
-        
-    #     # Start with no grades tested
-    #     tested_grades = []
-    #     continue_testing = True
-        
-    #     while continue_testing and len(tested_grades) < num_grades:
-    #         # Determine next grade to test
-    #         if not tested_grades:
-    #             # First grade - pick adaptively from model
-    #             next_grade = model.get_next_grade_to_sample(school_id)
-    #         else:
-    #             # Subsequent grades - use adaptive strategy
-    #             next_grade = model.get_next_grade_to_sample(school_id, tested_grades)
-            
-    #         # Add test result
-    #         score = school['grade_scores'][next_grade]
-    #         model.add_grade_result(school_id, next_grade, score)
-    #         tested_grades.append(next_grade)
-    #         total_tests_conducted += 1
-            
-    #         # After at least 2 grades, evaluate whether to continue
-    #         if len(tested_grades) >= 2:
-    #             eval_result = model.evaluate_school(
-    #                 school_id, stopping_threshold=stopping_threshold)
-                
-    #             # If decision is confident enough, follow it
-    #             if eval_result['decision'] == 'STOP' and eval_result['confidence'] >= min_confidence:
-    #                 continue_testing = False
-    #                 tests_saved += num_grades - len(tested_grades)
-                    
-    #                 # Record decision
-    #                 testing_decisions.append({
-    #                     'school_id': school_id,
-    #                     'decision': 'STOP',
-    #                     'true_average': school['average'],
-    #                     'estimated_average': eval_result['estimated_average'],
-    #                     'grades_tested': len(tested_grades),
-    #                     'max_grade_tested': max(g+1 for g in tested_grades),
-    #                     'probability_exceed': eval_result['probability_exceed'],
-    #                     'confidence': eval_result['confidence']
-    #                 })
-    #-----------------------------------------------------------------------------------------------------------------
+
         
         # If fully tested, record the average
         if len(tested_grades) == num_grades:

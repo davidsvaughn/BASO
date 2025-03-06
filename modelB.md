@@ -1,4 +1,5 @@
 see: [this](https://chatgpt.com/c/67ca0bd5-8538-8011-a841-9d202c6eee8d)
+check: https://upmath.me/
 
 # Adaptive Bayesian Testing Strategy
 
@@ -116,13 +117,6 @@ Suppose for a particular school we have observed *some subset* $O\subset \{1,\do
 - $\mathbf{X}_U$ = the vector of unobserved scores in grades $U$.
 
 Because we assume a multivariate normal model on $\mathbf{X}=(X_1,\dots,X_G)$, the conditional distribution of $\mathbf{X}_U$ given $\mathbf{X}_O = \mathbf{x}_O$ is also normal:
-
-
-DEBUG:
-
-$$
-\mathrm{Cov}(X_i,\,X_j) \;=\; \rho_{ij}\,\sigma_i\,\sigma_j.
-$$
 
 $$
 \mathbf{X}_U \mid \mathbf{X}_O = \mathbf{x}_O \sim \mathcal{N}\Bigl(\,\boldsymbol{\mu}_{U|O},\boldsymbol{\Sigma}_{U|O}\Bigr)

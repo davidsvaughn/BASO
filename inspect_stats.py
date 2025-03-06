@@ -62,11 +62,11 @@ if __name__ == "__main__":
     # plot each column of X on the same chart
     plot_cols(X, prefix='item', title='scores: ' + file_path.split('/')[-1].removesuffix('.txt'))
     
-    # plot the histogram of the row-wise stds
-    # stat_hist(X, f='std', prefix='per-item score ', axis=1, bins=20)
+    # plot the histogram of the col-wise stds
+    stat_hist(X, f='std', prefix='per-item score ', axis=0, bins=8)
     
     # # plot the histogram of the row-wise means
-    # stat_hist(X, f='mean', prefix='per-item score ', axis=1, bins=20)
+    # stat_hist(X, f='mean', prefix='per-model score ', axis=1, bins=20)
     
     # plot the histogram of the col-wise correlation coefficients
     corr_hist(X, name='item', bins=10)
