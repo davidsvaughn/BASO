@@ -15,7 +15,7 @@ Below, let $G$ be the total number of grades.
 For each grade $g \in \{1,\dots,G\}$, we maintain running estimates of its (population) mean $\mu_g$ and standard deviation $\sigma_g$. Concretely, we assume:
 
 $$
-X_g \sim \mathcal{N}\bigl(\mu_g,\,\sigma_g^2\bigr),
+X_g \sim \mathcal{N}\bigl(\mu_g , \sigma_g^2\bigr)
 $$
 
 where $X_g$ is the random variable corresponding to a school's true score in grade $g$.
@@ -27,15 +27,13 @@ Whenever the model observes a new score $x$ for grade $g$, it updates $\mu_g$ an
 1. **Update the mean**:
 
 $$
-\mu_g^{(\mathrm{new})} = \mu_g^{(\mathrm{old})} + \frac{x - \mu_g^{(\mathrm{old})}}{\,n_g + 1\,}.
+\mu_g^{(\mathrm{new})} = \mu_g^{(\mathrm{old})} + \frac{x - \mu_g^{(\mathrm{old})}}{n_g + 1}
 $$
 
 2. **Update the sum of squares** (an intermediate step in Welford's algorithm). Define
 
 $$
-S_g^{(\mathrm{old})} 
-\;=\;
-\bigl[\sigma_g^{(\mathrm{old})}\bigr]^2 \; \times \; n_g,
+S_g^{(\mathrm{old})} = \bigl[\sigma_g^{(\mathrm{old})}\bigr]^2  \times  n_g
 $$
 
 then
