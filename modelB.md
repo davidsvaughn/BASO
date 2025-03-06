@@ -121,6 +121,11 @@ $$
 \mathbf{X}_U \mid \mathbf{X}_O = \mathbf{x}_O \sim \mathcal{N}\Bigl(\,\boldsymbol{\mu}_{U|O},\boldsymbol{\Sigma}_{U|O}\Bigr)
 $$
 
+DEBUG:
+$$
+\mathrm{Cov}(X_i,\,X_j) \;=\; \rho_{ij}\,\sigma_i\,\sigma_j.
+$$
+
 where (in the *unstandardized* space):
 
 1. **Conditional mean**:
