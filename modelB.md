@@ -106,6 +106,12 @@ $$
 
 where $z_i = \frac{x_i - \mu_i}{\sigma_i}$, $z_j = \frac{x_j - \mu_j}{\sigma_j}$, and $w$ is an adaptive weight (bounded by a maximum like 0.1). The code then clips the result to lie in $[-1,1]$ and symmetrically updates $\rho_{ji}$.
 
+DEBUG:
+
+$$
+\mathrm{Cov}(X_i,\,X_j) \;=\; \rho_{ij}\,\sigma_i\,\sigma_j.
+$$
+
 ---
 
 ## 3. Predicting Unobserved Grades for a Partially Tested School
@@ -119,6 +125,7 @@ Because we assume a multivariate normal model on $\mathbf{X}=(X_1,\dots,X_G)$, t
 
 
 DEBUG:
+
 $$
 \mathrm{Cov}(X_i,\,X_j) \;=\; \rho_{ij}\,\sigma_i\,\sigma_j.
 $$
