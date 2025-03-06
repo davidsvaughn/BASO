@@ -77,4 +77,4 @@ $$
 \mathbf{x} \sim \mathcal{N}(\boldsymbol{\mu}, \Sigma), \quad \Sigma_{i,j} = C_{i,j} \sigma_i \sigma_j
 $$
 
-with parameters $ \((\boldsymbol{\mu}, \Sigma)\) $ updated adaptively as data arrives. The model uses Bayesian-inspired online updates for means/variances and a heuristic correlation update rule.
+with parameters $(\boldsymbol{\mu}, \Sigma)$ updated adaptively as data arrives. The model uses Bayesian-inspired online updates for means/variances and a heuristic correlation update rule.
