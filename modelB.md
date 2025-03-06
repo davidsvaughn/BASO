@@ -28,8 +28,8 @@ Whenever the model observes a new score $x$ for grade $g$, it updates $\mu_g$ an
 
 $$
 \mu_g^{(\mathrm{new})} 
-\;=\; 
-\mu_g^{(\mathrm{old})} \;+\; \frac{x - \mu_g^{(\mathrm{old})}}{\,n_g + 1\,}.
+;=; 
+\mu_g^{(\mathrm{old})} ;+; \frac{x - \mu_g^{(\mathrm{old})}}{\,n_g + 1\,}.
 $$
 
 2. **Update the sum of squares** (an intermediate step in Welford's algorithm). Define
