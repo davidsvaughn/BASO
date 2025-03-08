@@ -1,16 +1,16 @@
+import sys
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-import random
-from scipy import stats
-from scipy.stats import multivariate_normal
+# from scipy import stats
+# from scipy.stats import multivariate_normal
 
 class AdaptiveSchoolTestingModel:
     """
     Base model for adaptive testing of schools across multiple grades.
     Uses Bayesian inference to optimize testing strategy and early stopping.
     """
-    def __init__(self, num_grades=12, initial_uncertainty=0.5, min_confidence=0.95):
+    def __init__(self, num_grades=12, initial_uncertainty=0.5, min_confidence=0.95, initial_correlation=0.5):
         """
         Initialize the adaptive statistical model for school testing optimization.
         
@@ -36,8 +36,16 @@ class AdaptiveSchoolTestingModel:
         
         # Tracking grade-specific information
         self.grade_means = np.zeros(num_grades)
-        self.grade_stds = np.ones(num_grades) * initial_uncertainty * 100  # Initial wide uncertainty
+        self.grade_stds = np.ones(num_grades) * initial_uncertainty
         self.grade_sample_counts = np.zeros(num_grades, dtype=int)
+        
+        # dsv
+        self.cov = np.eye(num_grades).astype(float) + initial_uncertainty  * initial_correlation #* initial_uncertainty
+        # set the diagonal to all 1s
+        np.fill_diagonal(self.cov, 1.0)
+        self.cross_terms = np.zeros((num_grades, num_grades), dtype=float)
+        self.grade_pair_sample_counts = np.zeros((num_grades, num_grades), dtype=int)
+        
         
         # Correlation matrix starts with moderate assumed correlations
         self.correlation_matrix = np.eye(num_grades)
@@ -45,11 +53,12 @@ class AdaptiveSchoolTestingModel:
             for j in range(num_grades):
                 if i != j:
                     # Assume moderate correlation initially
-                    self.correlation_matrix[i, j] = 0.5
+                    self.correlation_matrix[i, j] = initial_correlation
         
         # Confidence-related tracking
         self.distribution_confidence = np.zeros(num_grades)  # Confidence in our estimates per grade
         self.correlation_confidence = 0.0  # Overall confidence in our correlation estimates
+
         
     def get_next_grade_to_sample(self, school_id, already_sampled_grades=None):
         """
@@ -132,7 +141,7 @@ class AdaptiveSchoolTestingModel:
                         school_pattern_priority = normalized_std * min(1.0, abs(avg_z) / 2)
             
             # 5. Small random component (10%) to prevent getting stuck in patterns
-            random_component = 0.1 * random.random()
+            random_component = 0.1 * np.random.random()
             
             # Combined priority score - weights can be adjusted based on importance
             priority = (
@@ -182,7 +191,8 @@ class AdaptiveSchoolTestingModel:
             school_data = {
                 'school_id': school_id,
                 'grade_scores': [None] * self.num_grades,
-                'sampled_grades': []
+                'sampled_grades': [],
+                'sampled_pairs': [],
             }
             self.partial_schools.append(school_data)
         
@@ -191,12 +201,15 @@ class AdaptiveSchoolTestingModel:
         if grade_index not in school_data['sampled_grades']:
             school_data['sampled_grades'].append(grade_index)
         
-        # Update our distribution estimates
-        self._update_grade_distribution(grade_index, score)
+        # # Update our distribution estimates
+        # self._update_grade_distribution(grade_index, score)
         
-        # If we have at least 2 grades from this school, update correlation
-        if len(school_data['sampled_grades']) >= 2:
-            self._update_correlations(school_data)
+        # # If we have at least 2 grades from this school, update correlation
+        # if len(school_data['sampled_grades']) >= 2:
+        #     self._update_correlations(school_data)
+        
+        # Update our distribution estimates
+        self._update_distributions(grade_index, score, school_data)
             
         # If we've sampled all grades for this school, move to completed schools
         if len(school_data['sampled_grades']) == self.num_grades:
@@ -244,12 +257,17 @@ class AdaptiveSchoolTestingModel:
         Update correlation estimates based on new multi-grade data from a school.
         Uses adaptive weights based on confidence.
         """
+        #TODO: loop over sampled_grades instead of all grades
+        #TODO: add 'new_grade' to school_data to track which grade was just added, then only loop over (that grade, sampled_grades) pairs! much faster!
         # Extract valid pairs of grades and scores for this school
         pairs = []
         for i in range(self.num_grades):
             for j in range(i+1, self.num_grades):
                 if school_data['grade_scores'][i] is not None and school_data['grade_scores'][j] is not None:
-                    pairs.append((i, j, school_data['grade_scores'][i], school_data['grade_scores'][j]))
+                    if (i, j) not in school_data['sampled_pairs']:
+                        school_data['sampled_pairs'].append((i, j))
+                        pairs.append((i, j, school_data['grade_scores'][i], school_data['grade_scores'][j]))
+                        self.grade_pair_sample_counts[(i, j)] += 1
         
         if not pairs:
             return  # No valid pairs
@@ -264,12 +282,19 @@ class AdaptiveSchoolTestingModel:
                 # Weight for this update - based on our confidence in the grade distributions
                 conf_i = self.distribution_confidence[i]
                 conf_j = self.distribution_confidence[j]
-                weight = np.sqrt(conf_i * conf_j)  # Geometric mean of confidences
+                conf_factor = np.sqrt(conf_i * conf_j)  # Geometric mean of confidences
+                
+                # Adaptive weight based on confidence and correlation confidence
+                # adapt_weight = min(0.1, 1.0 / (1.0 + len(self.schools_data) + len(self.partial_schools)))
+                
+                # Something more like this:
+                base_step = min(0.1, 1.0 / (1.0 + len(self.schools_data)))# + len(self.partial_schools)))
+                adapt_weight = base_step * conf_factor # dsv
+                
+                # print(f'{adapt_weight:0.4f}') #dsv
                 
                 # Update correlation with weighted average
                 old_corr = self.correlation_matrix[i, j]
-                # Adaptive weight based on confidence and correlation confidence
-                adapt_weight = min(0.1, 1.0 / (1.0 + len(self.schools_data) + len(self.partial_schools)))
                 new_corr = (1 - adapt_weight) * old_corr + adapt_weight * (z_i * z_j)
                 
                 # Ensure correlation is in [-1, 1]
@@ -278,7 +303,137 @@ class AdaptiveSchoolTestingModel:
                 # Update both entries (symmetric matrix)
                 self.correlation_matrix[i, j] = new_corr
                 self.correlation_matrix[j, i] = new_corr
+        # print(self.correlation_matrix) #dsv
+    
+    def _update_distributions(self, grade_index, new_score, school_data):
+        """
+        Update distribution estimates for a specific grade using online update formulas.
+        """
+        # Increment sample count
+        n = self.grade_sample_counts[grade_index]
+        self.grade_sample_counts[grade_index] += 1
+        n_new = n + 1
+        
+        # Online update for mean
+        old_mean = self.grade_means[grade_index]
+        self.grade_means[grade_index] = new_mean = old_mean + (new_score - old_mean) / n_new
+        
+        # Online update for variance/std (Welford's algorithm)
+        if n > 0:  # If we have at least one previous sample
+            old_s = self.grade_stds[grade_index] ** 2 * n  # Previous sum of squared deviations
+            new_s = old_s + (new_score - old_mean) * (new_score - self.grade_means[grade_index])
+            self.grade_stds[grade_index] = np.sqrt(new_s / n_new)
+        else:
+            # First sample, can't compute std yet, use initial uncertainty scaled to the score
+            self.grade_stds[grade_index] = self.initial_uncertainty * abs(new_score)
+        
+        
+        #-----------------------------------------------------------------------
+        update = False
+        for j in school_data['sampled_grades']:
+            if j == grade_index:
+                continue
+            update = True
+            
+            # update pair sample counts
+            self.grade_pair_sample_counts[grade_index, j] += 1
+            self.grade_pair_sample_counts[j, grade_index] += 1
+            
+            
+            # update cross terms
+            # self.cov[grade_index, j] = (1 - 1/n_new) * self.cov[grade_index, j] + (new_score - new_mean) * (school_data['grade_scores'][j] - self.grade_means[j]) / n_new
+            self.cross_terms[grade_index, j] += (new_score - new_mean) * (school_data['grade_scores'][j] - self.grade_means[j])
+            self.cross_terms[j, grade_index] = self.cross_terms[grade_index, j]
+            
+            
+            # # update covariance matrix from cross terms
+            # self.cov[grade_index, j] = self.cross_terms[grade_index, j] / self.grade_pair_sample_counts[grade_index, j]
+            # # self.cov[grade_index, j] = self.cross_terms[grade_index, j] / n_new # ????
+            # self.cov[j, grade_index] = self.cov[grade_index, j]
+            
+            #-------------------------------
+            # alternative covariance update
+            self.cov[grade_index, j] = (1 - 1/n_new) * self.cov[grade_index, j] + (new_score - new_mean) * (school_data['grade_scores'][j] - self.grade_means[j]) / n_new
+            self.cov[j, grade_index] = self.cov[grade_index, j]
+            #--------------------------------
+            
+            
+            # update correlation matrix from covariance matrix
+            self.correlation_matrix[grade_index, j] = self.cov[grade_index, j] / (self.grade_stds[grade_index] * self.grade_stds[j])
+            self.correlation_matrix[j, grade_index] = self.correlation_matrix[grade_index, j]
+    
+    
+    def print_error(self):
+        
+        # OLD
+        # # compute norm diff between true_means and grade_means
+        # err = np.linalg.norm(self.true_means - self.grade_means)
+        # print(f'\nmeans_err:\t{err:0.4f}')
+        # # compute norm diff between true_stds and grade_stds
+        # err = np.linalg.norm(self.true_stds - self.grade_stds)
+        # print(f'stds_err:\t{err:0.4f}')
+        # # compute norm diff between true_correlation_matrix and correlation_matrix
+        # err = np.linalg.norm(self.true_correlation_matrix - self.correlation_matrix)
+        # print(f'corr_err:\t{err:0.4f}')
+        # print()
+        
+        # NEW
+        rmse = np.sqrt(np.mean((self.true_means - self.grade_means)**2))
+        print(f'\nmeans_err:\t{rmse:0.4f}')
+        rel_error = np.mean(np.abs(self.true_stds - self.grade_stds) / self.true_stds)
+        print(f'stds_err:\t{rel_error:0.4f}')
+        fro_norm = np.linalg.norm(self.true_correlation_matrix - self.correlation_matrix, 'fro')
+        print(f'corr_err:\t{fro_norm:0.4f}')
+
+        
+    # def _update_correlations_orig(self, school_data):
+    #     """
+    #     Update correlation estimates based on new multi-grade data from a school.
+    #     Uses adaptive weights based on confidence.
+    #     """
+    #     # Extract valid pairs of grades and scores for this school
+    #     pairs = []
+    #     for i in range(self.num_grades):
+    #         for j in range(i+1, self.num_grades):
+    #             if school_data['grade_scores'][i] is not None and school_data['grade_scores'][j] is not None:
+    #                 pairs.append((i, j, school_data['grade_scores'][i], school_data['grade_scores'][j]))
+        
+    #     if not pairs:
+    #         return  # No valid pairs
+            
+    #     # Standardize the scores (z-scores) for correlation calculation
+    #     for i, j, score_i, score_j in pairs:
+    #         # Calculate z-scores
+    #         if self.grade_stds[i] > 0 and self.grade_stds[j] > 0:
+    #             z_i = (score_i - self.grade_means[i]) / self.grade_stds[i]
+    #             z_j = (score_j - self.grade_means[j]) / self.grade_stds[j]
                 
+    #             # Weight for this update - based on our confidence in the grade distributions
+    #             conf_i = self.distribution_confidence[i]
+    #             conf_j = self.distribution_confidence[j]
+    #             conf_factor = np.sqrt(conf_i * conf_j)  # Geometric mean of confidences
+                
+    #             # Adaptive weight based on confidence and correlation confidence
+    #             # adapt_weight = min(0.1, 1.0 / (1.0 + len(self.schools_data) + len(self.partial_schools)))
+                
+    #             # Something more like this:
+    #             base_step = min(0.1, 1.0 / (1.0 + len(self.schools_data)))# + len(self.partial_schools)))
+    #             adapt_weight = base_step * conf_factor * 2.0 # dsv
+                
+    #             # print(f'{adapt_weight:0.4f}') #dsv
+                
+    #             # Update correlation with weighted average
+    #             old_corr = self.correlation_matrix[i, j]
+    #             new_corr = (1 - adapt_weight) * old_corr + adapt_weight * (z_i * z_j)
+                
+    #             # Ensure correlation is in [-1, 1]
+    #             new_corr = max(-1.0, min(1.0, new_corr))
+                
+    #             # Update both entries (symmetric matrix)
+    #             self.correlation_matrix[i, j] = new_corr
+    #             self.correlation_matrix[j, i] = new_corr
+    #     # print(self.correlation_matrix) #dsv
+                 
     def _update_confidence_levels(self):
         """
         Update confidence levels in our distribution and correlation estimates.
@@ -607,8 +762,11 @@ class PrioritizedSchoolTestingModel(AdaptiveSchoolTestingModel):
     dynamic prioritization and pruning with the ability to return to schools later.
     """
     
-    def __init__(self, num_grades=12, initial_uncertainty=0.5, min_confidence=0.95,
-                revisit_threshold=0.2):
+    def __init__(self, num_grades=12, 
+                 initial_uncertainty=0.5,
+                 initial_correlation=0.5,
+                 min_confidence=0.95,
+                 revisit_threshold=0.2):
         """
         Initialize the prioritized testing model.
         
@@ -623,7 +781,7 @@ class PrioritizedSchoolTestingModel(AdaptiveSchoolTestingModel):
         revisit_threshold : float
             Probability threshold above which a previously pruned school might be revisited
         """
-        super().__init__(num_grades, initial_uncertainty, min_confidence)
+        super().__init__(num_grades, initial_uncertainty, min_confidence, initial_correlation)
         self.revisit_threshold = revisit_threshold
         
         # Additional tracking for prioritization
@@ -747,7 +905,7 @@ class PrioritizedSchoolTestingModel(AdaptiveSchoolTestingModel):
         
         self.school_rankings = rankings
         
-    def _calculate_best_probabilities(self, rankings, num_simulations=1000):
+    def _calculate_best_probabilities(self, rankings, num_simulations=1000, alpha=10.0, beta=5.0):
         """
         Calculate the probability that each school is the best using Monte Carlo simulation.
         
@@ -798,8 +956,7 @@ class PrioritizedSchoolTestingModel(AdaptiveSchoolTestingModel):
             
             # Skip if school data not found
             if school_data is None:
-                simulated_averages[school_id] = np.full(num_simulations, 
-                                                      school['estimated_average'])
+                simulated_averages[school_id] = np.full(num_simulations, school['estimated_average'])
                 continue
             
             # For partial schools, use the evaluation method to simulate
@@ -813,21 +970,21 @@ class PrioritizedSchoolTestingModel(AdaptiveSchoolTestingModel):
                         # Fallback if simulation failed
                         simulated_averages[school_id] = np.random.normal(
                             school['estimated_average'], 
-                            5.0 * (1.0 - confidence),
+                            beta * (1.0 - confidence),
                             num_simulations
                         )
                 else:
                     # Too few grades, use wider distribution
                     simulated_averages[school_id] = np.random.normal(
                         school['estimated_average'], 
-                        10.0,
+                        alpha,
                         num_simulations
                     )
             else:
                 # For pruned schools, use saved estimates
                 simulated_averages[school_id] = np.random.normal(
                     school['estimated_average'],
-                    5.0 * (1.0 - confidence),
+                    beta * (1.0 - confidence),
                     num_simulations
                 )
         
@@ -932,97 +1089,6 @@ class PrioritizedSchoolTestingModel(AdaptiveSchoolTestingModel):
         
         return pruned_school
         
-    def revisit_school(self, school_id):
-        """
-        Revisit a previously pruned school and add it back to active testing.
-        
-        Parameters:
-        -----------
-        school_id : str or int
-            Identifier for the school to revisit
-            
-        Returns:
-        --------
-        dict
-            The reactivated school data
-        """
-        # Find school in pruned schools
-        school_index = None
-        for i, school in enumerate(self.pruned_schools):
-            if school['school_id'] == school_id:
-                school_index = i
-                break
-                
-        if school_index is None:
-            raise ValueError(f"School {school_id} not found in pruned schools")
-            
-        # Create partial school record
-        partial_school = {
-            'school_id': school_id,
-            'grade_scores': self.pruned_schools[school_index]['grade_scores'].copy(),
-            'sampled_grades': self.pruned_schools[school_index]['sampled_grades'].copy()
-        }
-        
-        # Add to partial schools
-        self.partial_schools.append(partial_school)
-        
-        # Remove from pruned schools
-        self.pruned_schools.pop(school_index)
-        
-        # Update rankings
-        self._update_school_rankings()
-        
-        return partial_school
-    
-    def get_next_school_to_test(self):
-        """
-        Determine the next school to test based on current rankings and status.
-        
-        Returns:
-        --------
-        dict
-            Information about the next school to test, including the next grade
-            to test for that school
-        """
-        if not self.school_rankings:
-            return None
-            
-        # Prioritize schools with higher probability of being best
-        for ranking in self.school_rankings:
-            if ranking['status'] == 'PARTIAL':
-                school_id = ranking['school_id']
-                # Find school in partial schools
-                for school in self.partial_schools:
-                    if school['school_id'] == school_id:
-                        next_grade = self.get_next_grade_to_sample(school_id, school['sampled_grades'])
-                        return {
-                            'school_id': school_id,
-                            'next_grade': next_grade,
-                            'current_rank': ranking['rank'],
-                            'probability_best': ranking['probability_best'],
-                            'grades_tested': ranking['grades_tested']
-                        }
-                        
-        # If no partial schools, check if any pruned schools should be revisited
-        for ranking in self.school_rankings:
-            if ranking['status'] == 'PRUNED' and ranking['probability_best'] >= self.revisit_threshold:
-                school_id = ranking['school_id']
-                # Revisit this school
-                self.revisit_school(school_id)
-                # Find in partial schools now
-                for school in self.partial_schools:
-                    if school['school_id'] == school_id:
-                        next_grade = self.get_next_grade_to_sample(school_id, school['sampled_grades'])
-                        return {
-                            'school_id': school_id,
-                            'next_grade': next_grade,
-                            'current_rank': ranking['rank'],
-                            'probability_best': ranking['probability_best'],
-                            'grades_tested': ranking['grades_tested'],
-                            'revisited': True
-                        }
-        
-        return None
     
     def _record_testing_step(self, school_id, grade_index, score):
         """
@@ -1350,7 +1416,6 @@ def _get_testing_recommendation(school):
     """Generate a testing recommendation based on school status and probabilities."""
     if school['status'] == 'COMPLETE':
         return "Fully tested"
-    
     if school['probability_best'] > 0.3:
         return "High priority - continue testing"
     elif school['probability_best'] > 0.1:
@@ -1361,46 +1426,28 @@ def _get_testing_recommendation(school):
         return "Consider pruning"
 
 
-# Example simulation function
-def demonstrate_top_k_rankings():
-    """
-    Demonstrate how to use the prioritized testing model with top-K rankings.
-    """
-    
-    num_schools = 50
-    num_grades = 30
-    K = 10
-    
-    # Create model
-    model = PrioritizedSchoolTestingModel(
-        num_grades=num_grades,
-        initial_uncertainty=0.5,
-        min_confidence=0.85,
-        revisit_threshold=0.15
-    )
-    
+
+def generate_synthetic_data(num_schools=100, num_grades=12, mean_correlation=0.6):
+
     # Define true grade means and standard deviations
-    true_grade_means = np.linspace(70, 90, model.num_grades)
-    true_grade_stds = np.full(model.num_grades, 5)
-    true_correlation = 0.25
-    
-    # Generate true scores for schools
-    rand_seed = np.random.randint(100, 1000)
-    # rand_seed = 759
-    print(f"\nRANDOM SEED ---> {rand_seed}\n")
-    np.random.seed(rand_seed)
+    true_grade_means = np.linspace(70, 90, num_grades)  # Increasing means by grade
+    true_grade_stds = np.full(num_grades, 5)  # Equal std devs for simplicity
     
     # Generate true scores for all schools
     true_scores = []
     for s in range(num_schools):
-        # Generate correlated scores
-        shared_factor = np.random.normal(0, 1)
-        unique_factors = np.random.normal(0, 1, model.num_grades)
+        # Generate correlated scores for this school
+        shared_factor = np.random.normal(0, 1)  # School-specific factor
+        unique_factors = np.random.normal(0, 1, num_grades)  # Grade-specific factors
         
-        z_scores = shared_factor * np.sqrt(true_correlation) + \
-                  unique_factors * np.sqrt(1 - true_correlation)
+        # Mix factors based on desired correlation
+        z_scores = shared_factor * np.sqrt(mean_correlation) + \
+                  unique_factors * np.sqrt(1 - mean_correlation)
         
+        # Scale to actual scores
         scores = true_grade_means + z_scores * true_grade_stds
+        
+        # Calculate true average
         average = np.mean(scores)
         
         true_scores.append({
@@ -1410,19 +1457,151 @@ def demonstrate_top_k_rankings():
         })
     
     # Sort by true average (descending)
+    # true_scores.sort(key=lambda x: x['average'], reverse=True)
+    
+    return true_scores
+
+def estimate_data_stats(X):
+    mu_hat = X.mean(axis=0)
+    sigma_hat = np.cov(X, rowvar=False)
+    return mu_hat, sigma_hat
+
+def package_school_data(X):
+    true_scores = []
+    for i, row in enumerate(X):
+        true_scores.append({
+            'school_id': f"School_{i+1}",
+            'grade_scores': row,
+            'average': np.mean(row)
+        })
+    return true_scores
+
+def simulate_school_data(X, n=None):
+    if n is None:
+        n,m = X.shape
+    mu_hat, sigma_hat = estimate_data_stats(X)
+    X_new = np.random.multivariate_normal(mu_hat, sigma_hat, size=n)
+    
+    return package_school_data(X_new), X_new
+    
+
+def import_tab_data(filename):
+    """
+    Import tabular data from a tab-delimited file into a 2D numpy array.
+    
+    Args:
+        filename (str): Path to the tab-delimited file
+        
+    Returns:
+        np.ndarray: 2D array containing the imported data
+    """
+    try:
+        # Load data using numpy's loadtxt function with tab delimiter
+        data = np.loadtxt(filename, delimiter='\t')
+        return data
+    except Exception as e:
+        print(f"Error importing data: {e}")
+        return None
+    
+def load_school_data(file_path='llama-siam-1.txt'):
+    X = import_tab_data(file_path)
+    
+    X *= 100  # Convert QWK to percentage scale
+    
+    true_scores = []
+    for i, row in enumerate(X):
+        true_scores.append({
+            'school_id': f"School_{i+1}",
+            'grade_scores': row,
+            'average': np.mean(row)
+        })
+    return true_scores, X
+
+
+# Example simulation function
+def demonstrate_top_k_rankings():
+    """
+    Demonstrate how to use the prioritized testing model with top-K rankings.
+    """
+    
+    K = 1      # top K
+    N = 0.15    # initial grades to test for each school # 0.15
+    check = 25  # check every N tests
+    revisit_threshold   = 0.1 # .15
+    
+    # initial_uncertainty, initial_correlation = 0.01, 0.5 # ***** BEST *****
+    
+    initial_uncertainty, initial_correlation = 0.001, 0.5
+    # initial_uncertainty, initial_correlation = 0.1, 0.1
+    
+    
+    # random seed
+    rand_seed = np.random.randint(100, 1000)
+    # rand_seed = 407
+    print(f"\nRANDOM SEED ---> {rand_seed}\n")
+    np.random.seed(rand_seed)
+    
+    # # Generate true scores for schools
+    # num_schools, num_grades = 50, 30
+    # true_scores = generate_synthetic_data(num_schools=num_schools, num_grades=num_grades, true_correlation=0.25)
+    
+    # or...
+    # Load school data
+    # fn = 'data/llama-siam-1.txt'
+    fn = 'data/phi4-siam.txt'
+    
+    true_scores, X = load_school_data(fn)
+    
+    # generate synthetic data similar to the loaded data
+    # true_scores, X = simulate_school_data(X, n=100)#, n=100)
+    
+    # reset dimensions
+    num_schools = len(true_scores)
+    num_grades = len(true_scores[0]['grade_scores'])
+    
+    print(f"Loaded data for {num_schools} schools with {num_grades} grades each")
+    if N<1: N = int(N*num_grades)
+    if K<=1: K = int(K*num_schools)
+    print(f"Prioritizing TOP-{K} schools")
+    print(f"Testing {N} grades initially for each school\n")
+    
+    # Sort by true average (descending)
     true_scores.sort(key=lambda x: x['average'], reverse=True)
     true_rankings = {s['school_id']: i+1 for i, s in enumerate(true_scores)}
+    
+    # store the true best school and top 5
+    true_best = true_scores[0]['school_id']
+    true_top_5 = [s['school_id'] for s in true_scores[:5]]
     
     # randomly shuffle the schools
     np.random.shuffle(true_scores)
     
+    # Create model
+    model = PrioritizedSchoolTestingModel(
+        num_grades=num_grades,
+        initial_uncertainty=initial_uncertainty,
+        initial_correlation=initial_correlation,
+        min_confidence=0.85,
+        revisit_threshold=revisit_threshold
+    )
+    
+    # compute true correlation
+    true_correlation_matrix = np.corrcoef(X, rowvar=False)
+    true_means = np.mean(X, axis=0)
+    true_stds = np.std(X, axis=0)
+    model.true_correlation_matrix = true_correlation_matrix
+    model.true_means = true_means
+    model.true_stds = true_stds
+    
     # Start testing
-    max_tests = num_schools * model.num_grades // 2
+    max_tests = tot_tests = num_schools * model.num_grades
     tests_conducted = 0
     top_k_history = {}
     
+    #-----------------------------------------------------------------------------
     # Function to show top K rankings nicely
-    def print_top_k(top_k, true_rankings):
+    def print_top_k(top_k, true_rankings, k=10):
+        top_k = top_k[:k]
         print("\nCurrent Top School Rankings:")
         print("{:<5} {:<12} {:<10} {:<12} {:<10} {:<12}".format(
             "Rank", "School ID", "Status", "Est. Avg", "Prob Best", "True Rank"))
@@ -1440,103 +1619,99 @@ def demonstrate_top_k_rankings():
                 school['estimated_average'], 
                 school['probability_best'], 
                 true_rank))
+            
+        # check if true_best is ranked 1
+        top_school = top_k[0]
+        top_1_correct = top_school['school_id'] == true_best
+        if top_1_correct:
+            r_tested = top_school['grades_tested']/model.num_grades
+            prob_best = top_school['probability_best']
+            if r_tested == 1.0 and prob_best > 0.9:
+                print("\nTRUE BEST SCHOOL FOUND!")
+                return True
+        return False
+        
+    #-----------------------------------------------------------------------------
     
     # Test initial schools randomly to build model
     print("Starting initial testing to build model...")
+    
+    # initiallize the model by testing N random grades for each school   
     for i in range(num_schools):
         school = true_scores[i]
-        # select 2 random grades to test
-        grade_indices = np.random.choice(model.num_grades, 2, replace=False)
+        # select N random grades to test
+        grade_indices = np.random.choice(model.num_grades, N, replace=False)
+        
         for grade_index in grade_indices:
             score = school['grade_scores'][grade_index]
             model.add_grade_result(school['school_id'], grade_index, score, update_rankings=False)
             tests_conducted += 1
-        
-        # grade_index = np.random.randint(0, model.num_grades)
-        # score = school['grade_scores'][grade_index]
-        # model.add_grade_result(school['school_id'], grade_index, score, update_rankings=False)
-        # tests_conducted += 1
     
     # Show initial rankings
-    top_k = get_top_k_schools(model, k=K)
-    print_top_k(top_k, true_rankings)
-    top_k_history[tests_conducted] = top_k
+    ranked_schools = get_top_k_schools(model)#, k=num_schools)
+    print_top_k(ranked_schools, true_rankings)
+    
+    # top_k_history[tests_conducted] = ranked_schools
     
     # Main testing loop - prioritize based on rankings
     print("\nBeginning prioritized testing...")
     
     while tests_conducted < max_tests:
 
-        # Get top ranked schools
-        top_k = get_top_k_schools(model, k=K)
+        # Get ranked schools
+        ranked_schools = get_top_k_schools(model, k=num_schools)
         
-        # Find highest priority partially tested school
-        next_school = None
-        for school in top_k:
-            if school['status'] == 'PARTIAL':
-                next_school = school
-                break
+        #-----------------------------------------------------------------------------
+        # sample one grade from one school...
         
-        if next_school is None:
-            # Add a new school if no partial schools in top K
-            new_index = len(model.schools_data) + len(model.partial_schools) + len(model.pruned_schools)
-            if new_index < len(true_scores):
-                next_school_id = true_scores[new_index]['school_id']
-                # Test a random grade
-                grade_index = np.random.randint(0, model.num_grades)
-                score = true_scores[new_index]['grade_scores'][grade_index]
-                model.add_grade_result(next_school_id, grade_index, score, update_rankings=False)
-                tests_conducted += 1
-            else:
-                # No more schools to add
-                break
+        # GREEDY : find highest priority partially tested school
+        # next_school = next((s for s in ranked_schools if s['status'] == 'PARTIAL'), None)
+        
+        # RANDOM SAMPLE ~ prob_best
+        prob_best = np.array([(s['probability_best'] if s['status']=='PARTIAL' else 0) for s in ranked_schools])
+        if prob_best.sum() == 0:
+            # pick the index of the partial school with highest estimated average
+            est_avg = np.array([s['estimated_average'] if s['status']=='PARTIAL' else 0 for s in ranked_schools])
+            next_school_idx = np.argmax(est_avg)
         else:
-            # Test next grade for the selected school
-            school_id = next_school['school_id']
-            
-            # Find the school in partial_schools
-            school_data = None
-            for s in model.partial_schools:
-                if s['school_id'] == school_id:
-                    school_data = s
-                    break
-            
-            if school_data:
-                # Get next grade to test
-                next_grade = model.get_next_grade_to_sample(school_id, school_data['sampled_grades'])
-                
-                # Find true score
-                true_school = next((s for s in true_scores if s['school_id'] == school_id), None)
-                if true_school:
-                    score = true_school['grade_scores'][next_grade]
-                    model.add_grade_result(school_id, next_grade, score, update_rankings=False)
-                    tests_conducted += 1
-                    
-                    # Consider pruning low probability schools after some testing
-                    if (tests_conducted > 50 and 
-                        next_school['probability_best'] < 0.02 and 
-                        next_school['confidence'] > 0.7 and
-                        next_school['grades_tested'] >= 3):
-                        # Check if the school is still in partial_schools before pruning
-                        school_in_partial = any(s['school_id'] == school_id for s in model.partial_schools)
-                        if school_in_partial:
-                            model.prune_school(school_id)
-                        else:
-                            print(f"Skipping pruning for {school_id} as it's no longer in partial_schools")
+            prob_best /= prob_best.sum() # normalize so sums to 1
+            next_school_idx = np.random.choice(num_schools, p=prob_best)
+        next_school = ranked_schools[next_school_idx]
+        
+        # get school data
+        next_school_id = next_school['school_id']
+        next_school_data = next((s for s in model.partial_schools if s['school_id'] == next_school_id), None)
+        
+        # print(f"{next_school_id}")
+        
+        # get next grade to sample
+        next_grade = model.get_next_grade_to_sample(next_school_id, next_school_data['sampled_grades'])
+        
+        # sample true score for this (school, grade)
+        true_school = next((s for s in true_scores if s['school_id'] == next_school_id), None)
+        score = true_school['grade_scores'][next_grade]
+        model.add_grade_result(next_school_id, next_grade, score, update_rankings=False)
+        tests_conducted += 1
+        
+        #-----------------------------------------------------------------------------
         
         # Save rankings at checkpoints
-        if tests_conducted % 50 == 0:
+        if tests_conducted % check == 0:
             top_k = get_top_k_schools(model, k=K)
             top_k_history[tests_conducted] = top_k
-            print(f"\nAfter {tests_conducted} tests:")
-            print_top_k(top_k, true_rankings)
+            print(f"\nAfter {tests_conducted}/{tot_tests} tests ({tests_conducted/tot_tests:0.2f}):")
+            stop = print_top_k(top_k, true_rankings)
+            
+            if stop:
+                break
             
             # Calculate accuracy metrics
-            top_1_correct = top_k[0]['school_id'] == true_scores[0]['school_id']
+            top_1_correct = top_k[0]['school_id'] == true_best
             top_5_overlap = len([s for s in top_k[:5] if true_rankings[s['school_id']] <= 5])
-            print(f"Top-1 Accuracy: {'CORRECT' if top_1_correct else 'INCORRECT'}")
+            print(f"\nTop-1 Accuracy: {'CORRECT' if top_1_correct else 'INCORRECT'}")
             print(f"Top-5 Overlap: {top_5_overlap}/5 schools")
-            print("-" * 70)
+            model.print_error()
+            print("-" * 100)
     
     # Final evaluation
     print("\n----- FINAL RESULTS -----")
@@ -1544,12 +1719,12 @@ def demonstrate_top_k_rankings():
     print_top_k(top_k, true_rankings)
     
     # Evaluate final accuracy
-    true_best = true_scores[0]['school_id']
+    # true_best = true_scores[0]['school_id']
     model_best = top_k[0]['school_id']
     print(f"\nFound true best school: {'YES' if model_best == true_best else 'NO'}")
     
     # Calculate top-5 overlap
-    true_top_5 = [s['school_id'] for s in true_scores[:5]]
+    # true_top_5 = [s['school_id'] for s in true_scores[:5]]
     model_top_5 = [s['school_id'] for s in top_k[:5]]
     overlap = len(set(true_top_5) & set(model_top_5))
     print(f"Top-5 overlap: {overlap}/5 schools")
@@ -1563,6 +1738,17 @@ def demonstrate_top_k_rankings():
     mrr /= 5
     print(f"Mean Reciprocal Rank (MRR): {mrr:.3f}")
     
+    # compare to the true correlation matrix from X
+    cdiff = np.abs(model.correlation_matrix - true_correlation_matrix)
+    corr_values = cdiff[np.triu_indices(X.shape[1], k=1)]
+    plt.hist(corr_values, bins=20, color='skyblue', edgecolor='black')
+    plt.title(f'Correlation diffs')
+    plt.xlabel('cc abs(diff)')
+    plt.ylabel('freq')
+    plt.show()
+    
+    sys.exit()
+    
     # Visualize final rankings
     model.visualize_rankings(show_top_n=10)
     plt.savefig("final_rankings.png")
@@ -1572,6 +1758,12 @@ def demonstrate_top_k_rankings():
     model.visualize_testing_progress()
     plt.savefig("testing_progress.png")
     plt.show()
+    
+    # Return the model and true scores for further analysis
+    # print("\nEstimated Model parameters:")
+    # print(model.correlation_matrix.round(4))
+    # print(model.grade_means.round(4))
+    # print(model.grade_stds.round(4))
     
     return model, true_scores, top_k_history
 

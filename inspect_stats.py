@@ -23,6 +23,8 @@ def import_tab_data(filename):
 def plot_cols(X, title='scores', prefix='item'):
     for i in range(X.shape[1]):
         plt.plot(X[:, i], label=f'{prefix}{i+1}')
+    # plot the mean and make it black
+    plt.plot(np.mean(X, axis=1), label='mean', color='black')
     plt.legend()
     plt.title(title)
     plt.show()
@@ -49,7 +51,10 @@ def corr_hist(X, name='column', bins=10):
 
 # Example usage with llama-siam-1.txt
 if __name__ == "__main__":
-    file_path = 'llama-siam-1.txt'  # Update path if needed
+    file_path = 'data/llama-siam-1.txt'
+    file_path = 'data/phi4-siam.txt'
+    
+    
     X = import_tab_data(file_path)
     if X is not None:
         print(f"Successfully imported data with shape: {X.shape}")
@@ -58,6 +63,9 @@ if __name__ == "__main__":
     # fishers transformation
     # X = np.arctanh(X)
     # X = 0.5 * np.log((1 + X) / (1 - X))
+    
+    # convert to percent scale
+    X = X * 100
         
     # plot each column of X on the same chart
     plot_cols(X, prefix='item', title='scores: ' + file_path.split('/')[-1].removesuffix('.txt'))

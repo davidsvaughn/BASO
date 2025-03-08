@@ -692,32 +692,8 @@ class AdaptiveSchoolTestingModel:
         
         return testing_plan
 
-def simulate_testing_scenario(num_schools=100, num_grades=12, true_correlation=0.6, 
-                             stopping_threshold=0.05, min_confidence=0.9):
-    """
-    Simulate the adaptive testing process on a population of schools.
-    
-    Parameters:
-    -----------
-    num_schools : int
-        Total number of schools in the population
-    num_grades : int
-        Number of grades per school
-    true_correlation : float
-        True correlation between grades within schools
-    stopping_threshold : float
-        Probability threshold for stopping testing
-    min_confidence : float
-        Minimum confidence required for stopping decisions
-        
-    Returns:
-    --------
-    tuple
-        (model, results_summary)
-    """
-    # Initialize model
-    model = AdaptiveSchoolTestingModel(num_grades=num_grades, min_confidence=min_confidence)
-    
+
+def generate_synthetic_data(num_schools=100, num_grades=12, true_correlation=0.6):
     # Generate true scores for all schools
     np.random.seed(42)
     
@@ -750,6 +726,83 @@ def simulate_testing_scenario(num_schools=100, num_grades=12, true_correlation=0
     
     # Sort by true average (descending)
     true_scores.sort(key=lambda x: x['average'], reverse=True)
+    
+    return true_scores
+
+def import_tab_data(filename):
+    """
+    Import tabular data from a tab-delimited file into a 2D numpy array.
+    
+    Args:
+        filename (str): Path to the tab-delimited file
+        
+    Returns:
+        np.ndarray: 2D array containing the imported data
+    """
+    try:
+        # Load data using numpy's loadtxt function with tab delimiter
+        data = np.loadtxt(filename, delimiter='\t')
+        return data
+    except Exception as e:
+        print(f"Error importing data: {e}")
+        return None
+    
+def load_school_data(file_path='llama-siam-1.txt'):
+    file_path = 'llama-siam-1.txt'  # Update path if needed
+    X = import_tab_data(file_path)
+    true_scores = []
+    for i, row in enumerate(X):
+        true_scores.append({
+            'school_id': f"School_{i+1}",
+            'grade_scores': row*100,
+            'average': np.mean(row*100)
+        })
+    return true_scores
+
+
+def simulate_testing_scenario(num_schools=100, 
+                              num_grades=12, 
+                              true_correlation=0.6, 
+                              stopping_threshold=0.05,
+                              min_confidence=0.9):
+    """
+    Simulate the adaptive testing process on a population of schools.
+    
+    Parameters:
+    -----------
+    num_schools : int
+        Total number of schools in the population
+    num_grades : int
+        Number of grades per school
+    true_correlation : float
+        True correlation between grades within schools
+    stopping_threshold : float
+        Probability threshold for stopping testing
+    min_confidence : float
+        Minimum confidence required for stopping decisions
+        
+    Returns:
+    --------
+    tuple
+        (model, results_summary)
+    """
+    
+    # Generate synthetic data
+    true_scores = generate_synthetic_data(num_schools=num_schools,
+                                          num_grades=num_grades,
+                                          true_correlation=true_correlation)
+    
+    # or...
+    # Load school data
+    true_scores = load_school_data('llama-siam-1.txt')
+    
+    # reset dimensions
+    num_schools = len(true_scores)
+    num_grades = len(true_scores[0]['grade_scores'])
+    
+    # Initialize model
+    model = AdaptiveSchoolTestingModel(num_grades=num_grades, 
+                                       min_confidence=min_confidence)
     
     #-----------------------------------------------------------------------------------------------------------------
     # NEW CODE
