@@ -1602,17 +1602,46 @@ def demonstrate_top_k_rankings():
     # Test initial schools randomly to build model
     print("Starting initial testing to build model...")
     
+    
+    #--------------------------------------------------------------------------------
+    # METHOD 1: test same N random grades for every school
     # initiallize the model by testing N random grades for each school
-    grade_indices = np.random.choice(model.num_grades, N, replace=False)   
+    grade_indices = np.random.choice(model.num_grades, N, replace=False)
+    
+    # select N indices at equal intervals
+    grade_indices = np.arange(0, model.num_grades, model.num_grades//(N))[1:N+1]
+    
     for i in range(num_schools):
         school = true_scores[i]
         # select N random grades to test
         # grade_indices = np.random.choice(model.num_grades, N, replace=False)
-        
         for grade_index in grade_indices:
             score = school['grade_scores'][grade_index]
             model.add_grade_result(school['school_id'], grade_index, score, update_rankings=False)
             tests_conducted += 1
+    #--------------------------------------------------------------------------------
+    # METHOD 2
+    # M = 2
+    # grade_indices = np.random.choice(model.num_grades, N*M, replace=False)
+    # not_picked = np.ones(num_schools, dtype=bool)
+    # for grade_index in grade_indices:
+    #     school_indices = np.random.choice(num_schools, num_schools // M, replace=False)
+    #     for i in school_indices:
+    #         school = true_scores[i]
+    #         score = school['grade_scores'][grade_index]
+    #         model.add_grade_result(school['school_id'], grade_index, score, update_rankings=False)
+    #         tests_conducted += 1
+    #         not_picked[i] = False
+    # # get indices of not_picked schools and sample 2 grades
+    # school_indices = np.where(not_picked)[0]
+    # for i in school_indices:
+    #     school = true_scores[i]
+    #     for grade_index in grade_indices[:2]:
+    #         score = school['grade_scores'][grade_index]
+    #         model.add_grade_result(school['school_id'], grade_index, score, update_rankings=False)
+    #         tests_conducted += 1
+    #--------------------------------------------------------------------------------
+    
     
     # Show initial rankings
     ranked_schools = get_top_k_schools(model)#, k=num_schools)
