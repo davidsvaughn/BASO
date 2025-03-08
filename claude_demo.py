@@ -1602,11 +1602,12 @@ def demonstrate_top_k_rankings():
     # Test initial schools randomly to build model
     print("Starting initial testing to build model...")
     
-    # initiallize the model by testing N random grades for each school   
+    # initiallize the model by testing N random grades for each school
+    grade_indices = np.random.choice(model.num_grades, N, replace=False)   
     for i in range(num_schools):
         school = true_scores[i]
         # select N random grades to test
-        grade_indices = np.random.choice(model.num_grades, N, replace=False)
+        # grade_indices = np.random.choice(model.num_grades, N, replace=False)
         
         for grade_index in grade_indices:
             score = school['grade_scores'][grade_index]
@@ -1645,15 +1646,15 @@ def demonstrate_top_k_rankings():
             prob_best /= prob_best.sum() # normalize so sums to 1
             
             #- sharpen the probabilities --------------------------------
-            # prob_best = prob_best ** 1.5 # sharpen the probabilities
-            # prob_best /= prob_best.sum() # normalize so sums to 1
+            prob_best = prob_best ** 1.5 # sharpen the probabilities
+            prob_best /= prob_best.sum() # normalize so sums to 1
             #-----------------------------------------------------------
             # find the q-th highest probability in prob_best
-            rho = 3
-            q = np.sort(prob_best)[-rho]
-            # zero out all other probabilities
-            prob_best[prob_best < q] = 0
-            prob_best /= prob_best.sum() # normalize so sums to 1
+            # rho = 3
+            # q = np.sort(prob_best)[-rho]
+            # # zero out all other probabilities
+            # prob_best[prob_best < q] = 0
+            # prob_best /= prob_best.sum() # normalize so sums to 1
             #-----------------------------------------------------------
             
             next_school_idx = np.random.choice(num_schools, p=prob_best)
