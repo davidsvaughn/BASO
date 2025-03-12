@@ -1721,7 +1721,7 @@ def demonstrate_top_k_rankings():
             print(f"\nAfter {tests_conducted}/{tot_tests} tests ({tests_conducted/tot_tests:0.2f}):")
             stop = print_top_k(top_k, true_rankings)
             
-            # if stop: break
+            if stop: break
             
             # Calculate accuracy metrics
             top_1_correct = top_k[0]['school_id'] == true_best

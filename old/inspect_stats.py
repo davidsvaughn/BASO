@@ -51,8 +51,9 @@ def corr_hist(X, name='column', bins=10):
 
 # Example usage with llama-siam-1.txt
 if __name__ == "__main__":
-    file_path = 'data/llama-siam-1.txt'
-    file_path = 'data/phi4-siam.txt'
+    # xxxfile_path = 'data/llama-siam-1.txt'
+    # file_path = 'data/phi4-bw-1.txt'
+    file_path = 'data/phi4-math-1.txt'
     
     
     X = import_tab_data(file_path)
@@ -62,10 +63,13 @@ if __name__ == "__main__":
         
     # fishers transformation
     # X = np.arctanh(X)
-    # X = 0.5 * np.log((1 + X) / (1 - X))
+    X = 0.5 * np.log((1 + X) / (1 - X))
     
     # convert to percent scale
     X = X * 100
+    
+    # min-max normalize each column
+    X = (X - np.min(X, axis=0)) / (np.max(X, axis=0) - np.min(X, axis=0))
         
     # plot each column of X on the same chart
     plot_cols(X, prefix='item', title='scores: ' + file_path.split('/')[-1].removesuffix('.txt'))
