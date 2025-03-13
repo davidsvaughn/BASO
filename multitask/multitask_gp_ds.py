@@ -20,6 +20,11 @@ V = df[test_cols].values
 print(V.shape)
 V_mu = V.mean(axis=1)
 
+# find best checkpoint
+best_idx = np.argmax(V_mu)
+best_checkpoint = checkpoint_nums[best_idx]
+print(f'Best checkpoint: {best_checkpoint}')
+
 #-------------------------------------------------------------------------
 # Full data
 indices = np.where(np.ones_like(V))
@@ -30,7 +35,14 @@ Z = len(test_cols) # number of tasks/validation sets
 
 #--------------------------------------------------------------------------
 # sample subset of data
-n = 0.05
+
+rand_seed = np.random.randint(100, 1000)
+rand_seed = 111
+print(f'Random seed: {rand_seed}')
+np.random.seed(rand_seed)
+random.seed(rand_seed)
+
+n = 0.1
 n_samples = int(n*N)
 sample_indices = random.sample(range(N), n_samples)
 X_sample = X[sample_indices]
@@ -42,34 +54,41 @@ Y_sample = Y[sample_indices]
 Y_list = [Y_sample[X_sample[:,1] == i].reshape(-1,1) for i in range(Z)]
 X_list = [X_sample[X_sample[:,1] == i, 0].reshape(-1,1) for i in range(Z)]
 #-------------------------------------------------------------------------
+# method 1 : https://chatgpt.com/g/g-p-67d111a602648191a7250608ce8c7637-gaussianprocessmodelopt/c/67d113be-6634-8011-a028-f2e6fa7926ce
 
-# Now define kernel as a product of:
-#   - a standard RBF over x
-#   - a 'Coregionalize' kernel over z
-# This is essentially k_x(x,x') * B[z,z']
+# kern_x = GPy.kern.RBF(input_dim=1, active_dims=[0], name='rbf_x')
+# icm = GPy.util.multioutput.ICM(
+#     input_dim=1,       # dimension of the x input
+#     num_outputs=Z,     # number of tasks
+#     kernel=kern_x
+# )
 
-# In GPy, you might do something like:
-kern_x = GPy.kern.RBF(input_dim=1, active_dims=[0], name='rbf_x')
-icm = GPy.util.multioutput.ICM(
-    input_dim=1,       # dimension of the x input
-    num_outputs=Z,     # number of tasks
-    kernel=kern_x
-)
-# 'icm' is effectively k_x(x,x') * B[z,z']
-#-------------------------------------------------------------------------
+# m = GPy.models.GPCoregionalizedRegression(
+#     X_list,        # the continuous input (checkpoint) 
+#     Y_list,        # output
+#     kernel=icm
+# )
 
-# Build GP model
-# We pass X[:,0:1] as the continuous part, Y, plus we pass in X[:,1].astype(int) as the 'output_index'
-# so the ICM kernel knows which task each row belongs to:
+#--------------------------------------------------------------------------
+# method 2 : https://chat.deepseek.com/a/chat/s/5bcc33da-ff57-43cc-8749-66d467dfa7db
+
+# Define kernel with low-rank task correlations and task-specific noise
+k_rbf = GPy.kern.RBF(input_dim=1, active_dims=[0], name='rbf_x')
+k_coreg = GPy.kern.Coregionalize(input_dim=1, output_dim=Z, rank=Z//5, active_dims=[1], name='coreg_z')  # Rank-1 task correlations
+k_white = GPy.kern.White(1, active_dims=[1], name='white_z')  # Task-specific noise
+kernel = k_rbf * k_coreg + k_white
+
+# Create model
 m = GPy.models.GPCoregionalizedRegression(
-    X_list,        # the continuous input (checkpoint) 
-    Y_list,        # output
-    kernel=icm
+    X_list=X_list, 
+    Y_list=Y_list,
+    kernel=kernel
 )
+
 #-------------------------------------------------------------------------
 
 # Fit hyperparameters
-m.optimize(messages=True, max_iters=100)
+m.optimize(messages=True, max_iters=1000)
 
 #-------------------------------------------------------------------------
 # Predict average performance at new checkpoint x_star
@@ -96,5 +115,12 @@ all_preds = np.stack(mu_list, axis=-1) # shape (num_x_star, Z)
 avg_performance = all_preds.mean(axis=-1)  # shape (num_x_star,)
 
 print(avg_performance)
+
+# find best predicted checkpoint
+best_pred_idx = np.argmax(avg_performance)
+best_pred_checkpoint = int(x_star[best_pred_idx][0])
+
+print(f'\nBest checkpoint: {best_checkpoint}')
+print(f'Best predicted checkpoint: {best_pred_checkpoint}')
 
 # 'avg_performance[i]' is the predicted average across tasks at checkpoint x_star[i]
