@@ -81,7 +81,7 @@ full_test_T = torch.tensor(X[:,1], dtype=torch.long).reshape(-1,1)
 # sample subset of data
 
 rand_seed = np.random.randint(100, 1000)
-# rand_seed = 737 #   605 286 111
+# rand_seed = 737 # 260 737 ###     605 286 111
 print(f'Random seed: {rand_seed}')
 np.random.seed(rand_seed)
 random.seed(rand_seed)
@@ -96,7 +96,7 @@ rank_fraction = 0.8
 learning_rate = 0.1
 max_iterations = 1000
 tolerance = 1e-4
-patience = 5
+patience = 10
 
 beta = 0.5
 
