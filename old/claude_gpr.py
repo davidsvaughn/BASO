@@ -7,10 +7,14 @@ from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, Matern, WhiteKernel, ConstantKernel
 from sklearn.preprocessing import StandardScaler, OneHotEncoder
 from scipy.stats import norm
-import time, sys
+import time, sys, os
 import warnings
 import torch
 warnings.filterwarnings('ignore')  # Suppress convergence warnings
+
+# add parent directory to module search path
+sys.path.insert(1, os.path.join(sys.path[0], '..'))
+
 
 from time_tracker import TimeTracker
 tracker = TimeTracker()

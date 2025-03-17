@@ -5,3 +5,7 @@ virtualenv -p python3.10 venv && source venv/bin/activate
 pip install --upgrade pip
 
 pip install numpy pandas matplotlib scipy
+
+
+pip install spyder
+# pip install spyder-kernels==3.0.*

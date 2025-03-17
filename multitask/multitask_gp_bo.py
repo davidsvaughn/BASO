@@ -1,3 +1,4 @@
+import sys, os
 import numpy as np
 import pandas as pd
 import random
@@ -9,7 +10,15 @@ import GPy
 # Load the Data...
 # We'll assume you have a CSV with columns:
 # "CHECKPOINT", "TEST_AVERAGE", "TEST_1", "TEST_2", ..., "TEST_71".
-df = pd.read_csv('data/phi4-math-4claude.txt', delimiter='\t')
+# get directory of current file
+current_dir = os.path.dirname(os.path.abspath(__file__))
+# get parent directory
+parent_dir = os.path.dirname(current_dir)
+# data dir = parent_dir + '/data'
+data_dir = os.path.join(parent_dir, 'data')
+# load data
+df = pd.read_csv(os.path.join(data_dir, 'phi4-math-4claude.txt'), delimiter='\t')
+# df = pd.read_csv('data/phi4-math-4claude.txt', delimiter='\t')
 
 # Extract checkpoint numbers
 checkpoint_nums = df['CHECKPOINT'].apply(lambda x: int(x.split('-')[1])).values   
@@ -33,6 +42,8 @@ X = np.array([ [checkpoint_nums[i], j] for i, j in  zip(*indices) ])
 Y = V[indices]
 Z = len(test_cols) # number of tasks/validation sets
 
+sampled_mask = np.zeros_like(V, dtype=bool)
+
 #--------------------------------------------------------------------------
 # sample subset of data
 
@@ -48,6 +59,9 @@ sample_indices = random.sample(range(N), n_samples)
 X_sample = X[sample_indices]
 Y_sample = Y[sample_indices]
 
+# mark sampled data
+sampled_mask[indices[0][sample_indices], indices[1][sample_indices]] = True
+
 # X_list, Y_list: each element of these lists corresponds to one of the Z tasks
 # e.g. X_list[i] is the Nx1 array of x-values for task i
 #      Y_list[i] is the Nx1 array of observed y-values for task i
@@ -56,7 +70,7 @@ X_list = [X_sample[X_sample[:,1] == i, 0].reshape(-1,1) for i in range(Z)]
 
 
 #--------------------------------------------------------------------------
-method = 2
+method = 1
 #-------------------------------------------------------------------------
 # method 1 : https://chatgpt.com/g/g-p-67d111a602648191a7250608ce8c7637-gaussianprocessmodelopt/c/67d113be-6634-8011-a028-f2e6fa7926ce
 
@@ -105,7 +119,8 @@ m.optimize(messages=True, max_iters=1000)
 #-------------------------------------------------------------------------
 # Predict average performance at new checkpoint x_star
 # We can do: predict each task's performance, then average
-x_star = np.linspace(100, 5000, 50).reshape(-1,1)  # a grid of new checkpoints
+# x_star = np.linspace(100, 5000, 50).reshape(-1,1)  # a grid of new checkpoints
+x_star = checkpoint_nums.reshape(-1,1)  # a grid of new checkpoints
 
 #-------------------------------------------------------------------------
 # works!
@@ -139,7 +154,13 @@ print(f'Best predicted checkpoint: {best_pred_checkpoint}')
 
 # 'avg_performance[i]' is the predicted average across tasks at checkpoint x_star[i]
 
+#--------------------------------------------------------------------------
+
 S_mu = mu_mat.sum(axis=-1)
 S_var = var_mat.sum(axis=-1)
+
+unsampled_indices = np.where(~sampled_mask)
+X_unsampled = np.array([ [checkpoint_nums[i], j] for i, j in  zip(*unsampled_indices) ])
+Y_unsampled = V[unsampled_indices]
 
 print()
