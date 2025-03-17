@@ -81,7 +81,7 @@ full_test_T = torch.tensor(X[:,1], dtype=torch.long).reshape(-1,1)
 # sample subset of data
 
 rand_seed = np.random.randint(100, 1000)
-# rand_seed = 737 #   605 286 111
+# rand_seed = 605 #   605 286 111
 print(f'Random seed: {rand_seed}')
 np.random.seed(rand_seed)
 random.seed(rand_seed)
@@ -162,27 +162,13 @@ class MultitaskGPModel(gpytorch.models.ExactGP):
 
 #--------------------------------------------------------------------------
 class MultitaskGPSequentialSampler:
-    def __init__(self, num_tasks, rank, 
-                 max_iterations=100, 
-                 learning_rate=0.1, 
-                 beta=0.05,
-                 lr_scheduler='step',
-                 lr_gamma=0.9,
-                 lr_step_size=50,
-                 lr_min=1e-3,
-                 ):
+    def __init__(self, num_tasks, rank, max_iterations=100, learning_rate=0.1, beta=0.05):
         self.num_tasks = num_tasks
         self.rank = rank
         self.max_iterations = max_iterations
         self.learning_rate = learning_rate
         self.beta = beta
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        
-        # Learning rate schedule parameters
-        self.lr_scheduler = lr_scheduler  # 'step', 'exp', 'cosine', 'plateau'
-        self.lr_gamma = lr_gamma  # multiplicative factor for lr decay
-        self.lr_step_size = lr_step_size  # iterations between lr updates
-        self.lr_min = lr_min  # minimum learning rate
         
     #--------------------------------------------------------------------------
     def fit(self, train_x, train_t, train_y, tolerance=tolerance, patience=patience):
@@ -198,19 +184,6 @@ class MultitaskGPSequentialSampler:
         # Use the adam optimizer
         optimizer = torch.optim.Adam(self.model.parameters(), lr=self.learning_rate)
         
-        # Set up learning rate scheduler
-        if self.lr_scheduler == 'step':
-            scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=self.lr_step_size, gamma=self.lr_gamma)
-        elif self.lr_scheduler == 'exp':
-            scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=self.lr_gamma)
-        elif self.lr_scheduler == 'cosine':
-            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=self.max_iterations, eta_min=self.lr_min)
-        elif self.lr_scheduler == 'plateau':
-            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=self.lr_gamma, 
-                                                                patience=patience//2, threshold=tolerance, verbose=True)
-        else:  # No scheduler
-            scheduler = None
-        
         # "Loss" for GPs - the marginal log likelihood
         mll = gpytorch.mlls.ExactMarginalLogLikelihood(self.likelihood, self.model)
         
@@ -225,21 +198,12 @@ class MultitaskGPSequentialSampler:
             loss.backward()
             optimizer.step()
             
-            # Update learning rate
-            if scheduler is not None:
-                if self.lr_scheduler == 'plateau':
-                    scheduler.step(loss.item())
-                else:
-                    scheduler.step()
-            
             # Check convergence
             current_loss = loss.item()
             rel_improvement = (prev_loss - current_loss) / (abs(prev_loss) + 1e-10)
             
-            if i % 50 == 0:  # Log occasionally
-                current_lr = optimizer.param_groups[0]['lr']
-                # print(f'Iter {i} - Loss: {current_loss:.5f}, Improvement: {rel_improvement:.5f}')
-                print(f'Iter {i} - Loss: {current_loss:.5f}, Improvement: {rel_improvement:.5f}, LR: {current_lr:.6f}')
+            if i % 100 == 0:  # Log occasionally
+                print(f'Iter {i} - Loss: {current_loss:.5f}, Improvement: {rel_improvement:.5f}')
                 
             if rel_improvement < tolerance:
                 stall_counter += 1
