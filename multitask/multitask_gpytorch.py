@@ -89,16 +89,16 @@ random.seed(rand_seed)
 #--------------------------------------------------------------------------
 # set parameters
 
-init_subset = 0.05
+init_subset = 0.06
 
 rank_fraction = 0.8
 
 learning_rate = 0.1
 max_iterations = 1000
 tolerance = 1e-4
-patience = 10
+patience = 5
 
-beta = 0.5
+beta = 0.1
 
 log_interval = 5
 #--------------------------------------------------------------------------
@@ -107,6 +107,8 @@ n_samples = int(init_subset*N)
 sample_indices = random.sample(range(N), n_samples)
 X_sample = X[sample_indices]
 Y_sample = Y[sample_indices]
+
+# random sample one task in each checkpoint
 
 # mark sampled data
 sampled_mask[indices[0][sample_indices], indices[1][sample_indices]] = True
@@ -126,18 +128,16 @@ class MultitaskGPModel(gpytorch.models.ExactGP):
         super(MultitaskGPModel, self).__init__(train_x, train_y, likelihood)
         
         self.mean_module = gpytorch.means.ConstantMean()
-        
         # self.covar_module = gpytorch.kernels.RBFKernel()
+        
         self.covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.RBFKernel())
+        
         # https://docs.gpytorch.ai/en/v1.12/examples/00_Basic_Usage/Hyperparameters.html#Priors
-        
+        # lengthscale_prior = gpytorch.priors.GammaPrior(3.0, 6.0)
+        # self.covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.RBFKernel(lengthscale_prior=lengthscale_prior,))
+
         #--------------------------------------------------------------------------
-        # self.covar_module.register_constraint("raw_lengthscale", gpytorch.constraints.positive.Positive(lower_bound=0.5))
-        # self.covar_module.register_constraint("raw_outputscale", gpytorch.constraints.Posipositive.Positivetive(lower_bound=0.5))
-        # self.mean_module.register_constraint("raw_offset", gpytorch.constraints.Positive(lower_bound=1.0))
-        # gpytorch.constraints.positive.Positive(lower_bound=1.0)
-        
-        #---------
+
         # We learn an IndexKernel for 2 tasks
         # (so we'll actually learn 2x2=4 tasks with correlations)
         if rank is None:
