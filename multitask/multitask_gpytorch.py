@@ -1,4 +1,5 @@
 import sys, os
+import gpytorch.constraints
 import numpy as np
 import pandas as pd
 import random
@@ -90,16 +91,16 @@ random.seed(rand_seed)
 
 init_subset = 0.05
 
-rank_fraction = 0.2
+rank_fraction = 0.5
 
 learning_rate = 0.05
 max_iterations = 1000
 tolerance = 1e-4
 patience = 5
 
-beta = 0.1
+beta = 0.5
 
-log_interval = 10
+log_interval = 5
 #--------------------------------------------------------------------------
 
 n_samples = int(init_subset*N)
@@ -124,7 +125,16 @@ class MultitaskGPModel(gpytorch.models.ExactGP):
     def __init__(self, train_x, train_y, likelihood, num_tasks, rank=None):
         super(MultitaskGPModel, self).__init__(train_x, train_y, likelihood)
         self.mean_module = gpytorch.means.ConstantMean()
-        self.covar_module = gpytorch.kernels.RBFKernel()
+        # self.covar_module = gpytorch.kernels.RBFKernel()
+        self.covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.RBFKernel())
+        # https://docs.gpytorch.ai/en/v1.12/examples/00_Basic_Usage/Hyperparameters.html#Priors
+        #--------------------------------------------------------------------------
+        # self.covar_module.register_constraint("raw_lengthscale", gpytorch.constraints.positive.Positive(lower_bound=0.5))
+        # self.covar_module.register_constraint("raw_outputscale", gpytorch.constraints.Posipositive.Positivetive(lower_bound=0.5))
+        # self.mean_module.register_constraint("raw_offset", gpytorch.constraints.Positive(lower_bound=1.0))
+        # gpytorch.constraints.positive.Positive(lower_bound=1.0)
+        
+        #---------
         # We learn an IndexKernel for 2 tasks
         # (so we'll actually learn 2x2=4 tasks with correlations)
         if rank is None:
@@ -227,8 +237,8 @@ while True:
     # compute percent of data sampled
     fraction_sampled = sampled_mask.sum() / N
     
-    if fraction_sampled >= 0.25:
-        break
+    # if fraction_sampled >= 0.1:
+    #     break
 
     sampler.fit(train_X, train_T, train_Y)
 
@@ -255,6 +265,8 @@ while True:
     if step % log_interval == 0:
         clear_cuda_tensors()
         plt.plot(checkpoint_nums, avg_performance)
+        # set y axis between .83 and .85
+        plt.ylim([0.83, 0.85])
         # show confidence using S_var (sum of variances across tasks)
         S_sigma = S_var**0.5
         # plt.fill_between(checkpoint_nums, avg_performance - S_var, avg_performance + S_var, alpha=0.5)

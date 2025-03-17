@@ -4,6 +4,7 @@ import random
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, WhiteKernel, ConstantKernel as C
 import GPy
+from matplotlib import pyplot as plt
 
 # ---------------------------------------------------------------------
 # Load the Data...
@@ -105,7 +106,8 @@ m.optimize(messages=True, max_iters=1000)
 #-------------------------------------------------------------------------
 # Predict average performance at new checkpoint x_star
 # We can do: predict each task's performance, then average
-x_star = np.linspace(100, 5000, 50).reshape(-1,1)  # a grid of new checkpoints
+# x_star = np.linspace(100, 5000, 50).reshape(-1,1)  # a grid of new checkpoints
+x_star = checkpoint_nums.reshape(-1,1)
 
 #-------------------------------------------------------------------------
 # works!
@@ -129,6 +131,13 @@ var_mat = np.stack(var_list, axis=-1) # shape (num_x_star, Z)
 avg_performance = mu_mat.mean(axis=-1)  # shape (num_x_star,)
 
 print(avg_performance)
+
+plt.plot(x_star, avg_performance)
+# plt.ylim([0.8, 0.9])
+plt.xlabel('Checkpoint')
+plt.ylabel('Average Performance')
+plt.title('Predicted Average Performance')
+plt.show()
 
 # find best predicted checkpoint
 best_pred_idx = np.argmax(avg_performance)
