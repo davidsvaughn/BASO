@@ -91,14 +91,14 @@ random.seed(rand_seed)
 
 init_subset = 0.05
 
-rank_fraction = 0.5
+rank_fraction = 0.75
 
 learning_rate = 0.05
 max_iterations = 1000
 tolerance = 1e-4
 patience = 5
 
-beta = 0.5
+beta = 0.25
 
 log_interval = 5
 #--------------------------------------------------------------------------
