@@ -35,7 +35,7 @@ def clear_cuda_tensors(target_size=None): # (1, 8192, 32, 96)
 
 # ---------------------------------------------------------------------
 fn = 'phi4-math-4claude.txt'
-# fn = 'phi4-bw-4claude.txt'
+fn = 'phi4-bw-4claude.txt'
 
 # Load the Data...
 # We'll assume you have a CSV with columns:
@@ -60,7 +60,7 @@ test_cols = [col for col in df.columns if col.startswith('TEST_') and col != 'TE
 checkpoints = (checkpoint_nums - checkpoint_nums.min()) / (checkpoint_nums.max() - checkpoint_nums.min())
 
 # TODO: SCALING!!!
-checkpoints *= 20  #  10  20  50  100
+checkpoints *= 10  #  10  50  100
 #--------------------------------------------------------------
 
 V = df[test_cols].values
@@ -309,7 +309,7 @@ while True:
         clear_cuda_tensors()
         plt.plot(checkpoints, avg_performance)
         # set y axis between .83 and .85
-        plt.ylim([0.82, 0.85])
+        # plt.ylim([0.82, 0.85])
         # show confidence using S_var (sum of variances across tasks)
         # plt.fill_between(checkpoints, avg_performance - S_var, avg_performance + S_var, alpha=0.5)
         # S_sigma = S_var**0.5

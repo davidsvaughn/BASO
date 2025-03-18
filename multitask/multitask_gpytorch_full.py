@@ -55,14 +55,6 @@ checkpoint_nums = df['CHECKPOINT'].apply(lambda x: int(x.split('-')[1])).values
 # Identify test columns (excluding average)
 test_cols = [col for col in df.columns if col.startswith('TEST_') and col != 'TEST_AVERAGE']
 
-#--------------------------------------------------------------
-# min/max normalize checkpoints
-checkpoints = (checkpoint_nums - checkpoint_nums.min()) / (checkpoint_nums.max() - checkpoint_nums.min())
-
-# TODO: SCALING!!!
-checkpoints *= 20  #  10  20  50  100
-#--------------------------------------------------------------
-
 V = df[test_cols].values
 print(V.shape)
 V_mu = V.mean(axis=1)
@@ -76,7 +68,7 @@ print(f'Best checkpoint: {best_checkpoint}')
 # Full data
 indices = np.where(np.ones_like(V))
 N = len(indices[0]) # total number of (x,z) checkpoint-task pairs
-X = np.array([ [checkpoints[i], j] for i, j in  zip(*indices) ])
+X = np.array([ [checkpoint_nums[i], j] for i, j in  zip(*indices) ])
 Y = V[indices]
 Z = len(test_cols) # number of tasks/validation sets
 
@@ -97,17 +89,12 @@ random.seed(rand_seed)
 #--------------------------------------------------------------------------
 # set parameters
 
-# TODO: ensure EI can lead to sampling unsampled tasks!!!
+init_subset = 0.06
 
-# TODO: compare to random (with uncertainty)
-# - uncertainty for THIS model should use task covariances!!! reduces it!!!
-
-init_subset = 0.02
-
-rank_fraction = 0.25
+rank_fraction = 0.8
 
 learning_rate = 0.1
-max_iterations = 500
+max_iterations = 1000
 tolerance = 1e-4
 patience = 5
 
@@ -129,34 +116,168 @@ train_X = torch.tensor(X_sample[:,0], dtype=torch.float32)
 train_T = torch.tensor(X_sample[:,1], dtype=torch.long).reshape(-1,1)
 train_Y = torch.tensor(Y_sample, dtype=torch.float32)
 
+#--------------------------------------------------------------------------
+
+# class MultitaskGPModel_old(gpytorch.models.ExactGP):
+#     def __init__(self, train_x, train_y, likelihood, num_tasks, rank=None):
+#         super(MultitaskGPModel_old, self).__init__(train_x, train_y, likelihood)
+#         self.mean_module = gpytorch.means.ConstantMean()
+#         # self.covar_module = gpytorch.kernels.RBFKernel()
+#         self.covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.RBFKernel())
+#         # https://docs.gpytorch.ai/en/v1.12/examples/00_Basic_Usage/Hyperparameters.html#Priors
+#         # lengthscale_prior = gpytorch.priors.GammaPrior(3.0, 6.0)
+#         # self.covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.RBFKernel(lengthscale_prior=lengthscale_prior,))
+#         #--------------------------------------------------------------------------
+#         # We learn an IndexKernel for 2 tasks
+#         # (so we'll actually learn 2x2=4 tasks with correlations)
+#         if rank is None: rank = num_tasks
+#         elif rank > num_tasks: rank = num_tasks
+#         elif rank < 1: rank = int(num_tasks*rank)
+#         # self.task_covar_module = gpytorch.kernels.IndexKernel(num_tasks=num_tasks, rank=rank)
+#         self.task_covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.IndexKernel(num_tasks=num_tasks, rank=rank))
+
+#     def forward(self,x,i):
+#         mean_x = self.mean_module(x)
+#         # Get input-input covariance
+#         covar_x = self.covar_module(x)
+#         # Get task-task covariance
+#         covar_i = self.task_covar_module(i)
+#         # Multiply the two together to get the covariance we want
+#         covar = covar_x.mul(covar_i)
+#         return gpytorch.distributions.MultivariateNormal(mean_x, covar)
+
+#--------------------------------------------------------------------------
+
+lengthscale_constraint=gpytorch.constraints.GreaterThan(1.0)
+lengthscale_prior = gpytorch.priors.GammaPrior(3.0, 1.0)  # Higher alpha/beta ratio = larger values
+
 class MultitaskGPModel(gpytorch.models.ExactGP):
     def __init__(self, train_x, train_y, likelihood, num_tasks, rank=None):
         super(MultitaskGPModel, self).__init__(train_x, train_y, likelihood)
-        self.mean_module = gpytorch.means.ConstantMean()
-        # self.covar_module = gpytorch.kernels.RBFKernel()
-        self.covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.RBFKernel())
-        
-        # https://docs.gpytorch.ai/en/v1.12/examples/00_Basic_Usage/Hyperparameters.html#Priors
-        # lengthscale_prior = gpytorch.priors.GammaPrior(3.0, 6.0)
-        # self.covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.RBFKernel(lengthscale_prior=lengthscale_prior,))
-        #--------------------------------------------------------------------------
-        # We learn an IndexKernel for 2 tasks
-        # (so we'll actually learn 2x2=4 tasks with correlations)
         if rank is None: rank = num_tasks
-        elif rank > num_tasks: rank = num_tasks
-        elif rank < 1: rank = int(num_tasks*rank)
-        self.task_covar_module = gpytorch.kernels.IndexKernel(num_tasks=num_tasks, rank=rank)
-        # self.task_covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.IndexKernel(num_tasks=num_tasks, rank=rank))
+        elif rank>num_tasks: rank = num_tasks
+        elif rank<1: rank = int(num_tasks*rank)
+        self.mean_module = gpytorch.means.MultitaskMean(
+            gpytorch.means.ConstantMean(), num_tasks=num_tasks
+        )
+        self.covar_module = gpytorch.kernels.MultitaskKernel(
+            gpytorch.kernels.RBFKernel(),
+            # gpytorch.kernels.RBFKernel(lengthscale_constraint=lengthscale_constraint),
+            # gpytorch.kernels.RBFKernel(lengthscale_prior=lengthscale_prior),
+            # gpytorch.kernels.MaternKernel(),#nu=2.5),
+            num_tasks=num_tasks, rank=rank,
+        )
 
-    def forward(self,x,i):
+    def forward(self, x):
         mean_x = self.mean_module(x)
-        # Get input-input covariance
         covar_x = self.covar_module(x)
-        # Get task-task covariance
-        covar_i = self.task_covar_module(i)
-        # Multiply the two together to get the covariance we want
-        covar = covar_x.mul(covar_i)
-        return gpytorch.distributions.MultivariateNormal(mean_x, covar)
+        return gpytorch.distributions.MultitaskMultivariateNormal(mean_x, covar_x)
+
+#--------------------------------------------------------------------------
+# test data
+import math
+train_x = torch.linspace(0, 1, 100)
+train_y = torch.stack([
+    torch.sin(train_x * (2 * math.pi)) + torch.randn(train_x.size()) * 0.2,
+    torch.cos(train_x * (2 * math.pi)) + torch.randn(train_x.size()) * 0.2,
+], -1)
+
+# real data
+train_x = torch.tensor(checkpoint_nums, dtype=torch.float32)
+train_y = torch.tensor(V, dtype=torch.float32)
+
+# min/max normalize train_x
+train_x = (train_x - train_x.min()) / (train_x.max() - train_x.min())
+# mult by 10
+train_x = train_x * 10
+
+
+numtasks = train_y.size(-1)
+likelihood = gpytorch.likelihoods.MultitaskGaussianLikelihood(num_tasks=numtasks)
+model = MultitaskGPModel(train_x, train_y, likelihood, numtasks)
+
+# Find optimal model hyperparameters
+model.train()
+likelihood.train()
+
+# Use the adam optimizer
+optimizer = torch.optim.Adam(model.parameters(), lr=0.01)  # Includes GaussianLikelihood parameters
+
+# "Loss" for GPs - the marginal log likelihood
+mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
+
+training_iterations = 800
+
+for i in range(training_iterations):
+    optimizer.zero_grad()
+    output = model(train_x)
+    loss = -mll(output, train_y)
+    loss.backward()
+    if i % 10 == 0:
+        print('Iter %d/%d - Loss: %.3f, lengthscale: %.3f' % (i + 1, training_iterations, loss.item(), model.covar_module.data_covar_module.lengthscale.item()))
+    optimizer.step()
+    
+# print lengthscale of RBF kernel
+print(model.covar_module.data_covar_module.lengthscale)
+
+# Set into eval mode
+model.eval()
+likelihood.eval()
+
+# make predictions
+with torch.no_grad(), gpytorch.settings.fast_pred_var():
+    test_x = train_x[::2]
+    predictions = likelihood(model(test_x))
+    mean = predictions.mean
+    # lower, upper = predictions.confidence_region()
+
+
+for i in range(numtasks):
+    plt.figure(figsize=(15, 10))
+    # Plot training data
+    plt.plot(train_x.detach().numpy(), train_y[:, i].detach().numpy(), 'k*')
+    # Plot predictive means as blue line
+    plt.plot(test_x.detach().numpy(), mean[:, i].detach().numpy(), 'b')
+    # Shade between the lower and upper confidence bounds
+    # plt.fill_between(test_x.detach().numpy(), lower[:, i].detach().numpy(), upper[:, i].detach().numpy(), alpha=0.5)
+    # plt.ylim([0.7, 0.9])
+    plt.legend(['Observed Data', 'Mean', 'Confidence'])
+    plt.title(f'Task {i}')
+    # set figsize
+    plt.show()
+    
+    
+# if numtasks == 2:
+#     # Initialize plots
+#     f, (y1_ax, y2_ax) = plt.subplots(1, 2, figsize=(8, 3))
+
+#     # Make predictions
+#     with torch.no_grad(), gpytorch.settings.fast_pred_var():
+#         test_x = torch.linspace(0, 1, 51)
+#         predictions = likelihood(model(test_x))
+#         mean = predictions.mean
+#         lower, upper = predictions.confidence_region()
+
+#     # Plot training data as black stars
+#     y1_ax.plot(train_x.detach().numpy(), train_y[:, 0].detach().numpy(), 'k*')
+#     # Predictive mean as blue line
+#     y1_ax.plot(test_x.numpy(), mean[:, 0].numpy(), 'b')
+#     # Shade in confidence
+#     y1_ax.fill_between(test_x.numpy(), lower[:, 0].numpy(), upper[:, 0].numpy(), alpha=0.5)
+#     y1_ax.set_ylim([-3, 3])
+#     y1_ax.legend(['Observed Data', 'Mean', 'Confidence'])
+#     y1_ax.set_title('Observed Values (Likelihood)')
+
+#     # Plot training data as black stars
+#     y2_ax.plot(train_x.detach().numpy(), train_y[:, 1].detach().numpy(), 'k*')
+#     # Predictive mean as blue line
+#     y2_ax.plot(test_x.numpy(), mean[:, 1].numpy(), 'b')
+#     # Shade in confidence
+#     y2_ax.fill_between(test_x.numpy(), lower[:, 1].numpy(), upper[:, 1].numpy(), alpha=0.5)
+#     y2_ax.set_ylim([-3, 3])
+#     y2_ax.legend(['Observed Data', 'Mean', 'Confidence'])
+#     y2_ax.set_title('Observed Values (Likelihood)')
+#     plt.show()
 
 #--------------------------------------------------------------------------
 class MultitaskGPSequentialSampler:
@@ -270,10 +391,6 @@ sampler = MultitaskGPSequentialSampler(num_tasks=Z,
                                        learning_rate=learning_rate, beta=beta)
 #--------------------------------------------------------------------------
 
-# get list of sampled tasks
-# sampled_tasks = np.unique(np.where(sampled_mask)[1])
-unsampled_tasks = np.setdiff1d(np.arange(Z), np.unique(np.where(sampled_mask)[1]))
-
 step = 0
 while True:
     step += 1
@@ -290,8 +407,8 @@ while True:
     y_var = y_pred.variance.detach().cpu().numpy()
 
     # reshape y_mean back into (num_x, num_z)
-    y_mean = y_mean.reshape((len(checkpoints), Z))
-    y_var = y_var.reshape((len(checkpoints), Z))
+    y_mean = y_mean.reshape((len(checkpoint_nums), Z))
+    y_var = y_var.reshape((len(checkpoint_nums), Z))
     S_var = y_var.sum(axis=-1)
 
     # find best predicted checkpoint
@@ -299,7 +416,7 @@ while True:
     # print(avg_performance)
 
     best_pred_idx = np.argmax(avg_performance)
-    best_pred_checkpoint = checkpoint_nums[best_pred_idx]
+    best_pred_checkpoint = int(checkpoint_nums[best_pred_idx])
 
     # print(f'\nBest checkpoint: {best_checkpoint}')
     print(f'\nStep {step}: % sampled={100*fraction_sampled:.2f}%')
@@ -307,13 +424,13 @@ while True:
     
     if step % log_interval == 0:
         clear_cuda_tensors()
-        plt.plot(checkpoints, avg_performance)
+        plt.plot(checkpoint_nums, avg_performance)
         # set y axis between .83 and .85
-        plt.ylim([0.82, 0.85])
+        plt.ylim([0.83, 0.85])
         # show confidence using S_var (sum of variances across tasks)
-        # plt.fill_between(checkpoints, avg_performance - S_var, avg_performance + S_var, alpha=0.5)
-        # S_sigma = S_var**0.5
-        # plt.fill_between(checkpoints, avg_performance - S_sigma, avg_performance + S_sigma, alpha=0.5)
+        S_sigma = S_var**0.5
+        # plt.fill_between(checkpoint_nums, avg_performance - S_var, avg_performance + S_var, alpha=0.5)
+        # plt.fill_between(checkpoint_nums, avg_performance - S_sigma, avg_performance + S_sigma, alpha=0.5)
         plt.xlabel('Checkpoint')
         plt.ylabel('Average Performance')
         plt.title('Predicted Average Performance')
@@ -326,14 +443,9 @@ while True:
     unsampled_indices = np.where(~sampled_mask)
     # X_unsampled = np.array([ [i, j] for i, j in  zip(*unsampled_indices) ])
     X_unsampled = np.array(unsampled_indices).T
-    # get list of unsamplesd tasks, if any
-    unsampled_tasks = np.setdiff1d(np.arange(Z), np.unique(np.where(sampled_mask)[1]))
 
     EI = []
     for i,j in zip(*unsampled_indices):
-        if unsampled_tasks.size > 0 and j not in unsampled_tasks:
-            EI.append(-100)
-            continue
         mu = y_mean[i,j]
         sig = y_var[i,j]**0.5
         sx = y_mean[i].sum() - mu
@@ -350,6 +462,6 @@ while True:
 
     print(f'\tnext sample - checkpoint:\t{next_checkpoint}, task={next_j}')
     sampled_mask[next_i, next_j] = True
-    train_X = torch.cat([train_X, torch.tensor([checkpoints[next_i]], dtype=torch.float32)])
+    train_X = torch.cat([train_X, torch.tensor([checkpoint_nums[next_i]], dtype=torch.float32)])
     train_T = torch.cat([train_T, torch.tensor([next_j], dtype=torch.long).reshape(-1,1)])
     train_Y = torch.cat([train_Y, torch.tensor([V[next_i, next_j]], dtype=torch.float32)])
