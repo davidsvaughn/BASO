@@ -10,6 +10,11 @@ git config --global credential.helper store
 Credentials will be stored in plaintext at ~/.git-credentials
 
 --------------------------------------------------------------
+dsv-llm-x1
+---------------
+export AZIP=azureuser@20.121.119.98
+ssh -i $AZURE_EAST_PEM $AZIP
+--------------------------------------------------------------
 
 git clone https://github.com/davidsvaughn/baso
 # git config --global credential.helper store

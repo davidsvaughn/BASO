@@ -36,6 +36,115 @@ def clear_cuda_tensors(target_size=None): # (1, 8192, 32, 96)
     print(f"Cleared {count} tensors")
 
 #--------------------------------------------------------------------------
+
+def should_stop_sampling(y_mean, y_covar, best_pred_idx, checkpoint_nums, 
+                         tolerance=0.01, confidence=0.90, n_samples=1000, max_top_k=5):
+    """
+    Determine if sampling should stop based on:
+    1. Confidence in current best checkpoint from posterior sampling
+    2. Proximity of top-k predicted checkpoints' performance
+    
+    Args:
+        y_mean: Mean predictions from GP (shape K x Z)
+        y_covar: Covariance matrix from GP (shape K x Z x K x Z)
+        best_pred_idx: Index of current predicted best checkpoint
+        checkpoint_nums: Array of checkpoint numbers for reporting
+        tolerance: Tolerance level for relative difference in performance
+        confidence: Required confidence level
+        n_samples: Number of posterior samples to draw
+        max_top_k: Maximum number of top checkpoints to consider
+        
+    Returns:
+        bool: True if sampling should stop, False otherwise
+        dict: Diagnostic information about the decision
+    """
+    K, Z = y_mean.shape
+    
+    # Compute average performance for each checkpoint
+    checkpoint_means = y_mean.mean(axis=1)  # Shape: (K,)
+    
+    # Compute standard error of the mean for each checkpoint
+    checkpoint_stderrs = np.zeros(K)
+    for k in range(K):
+        # Extract the Z×Z covariance matrix for checkpoint k
+        task_cov_matrix = y_covar[k, :, k, :]
+        # Standard error of mean = sqrt(sum of covariance elements) / Z
+        checkpoint_stderrs[k] = np.sqrt(task_cov_matrix.sum()) / Z
+    
+    # Find the top-k checkpoints by mean performance
+    top_k = min(max_top_k, K)
+    top_indices = np.argsort(-checkpoint_means)[:top_k]
+    top_means = checkpoint_means[top_indices]
+    top_stderrs = checkpoint_stderrs[top_indices]
+    top_checkpoints = checkpoint_nums[top_indices]
+    
+    # Compute relative difference from best to others
+    best_mean = top_means[0]
+    rel_diffs = np.abs(top_means - best_mean) / best_mean
+    
+    # Sample from posterior distribution over checkpoint performances
+    # We'll use a multivariate normal approximation
+    
+    # Construct the covariance matrix for checkpoint means
+    # This accounts for correlations between checkpoints
+    checkpoint_cov = np.zeros((K, K))
+    for i in range(K):
+        for j in range(K):
+            # Average covariance between tasks for checkpoints i and j
+            checkpoint_cov[i, j] = np.mean(y_covar[i, :, j, :]) / Z**2
+
+    # Ensure covariance matrix is positive semi-definite (add small diagonal if needed)
+    min_eig = np.min(np.linalg.eigvalsh(checkpoint_cov))
+    if min_eig < 0:
+        checkpoint_cov += np.eye(K) * (abs(min_eig) + 1e-6)
+    
+    # Draw samples from multivariate normal distribution
+    samples = np.random.multivariate_normal(
+        mean=checkpoint_means,
+        cov=checkpoint_cov,
+        size=n_samples
+    )
+    
+    # For each sample, find which checkpoint is best
+    best_checkpoints = np.argmax(samples, axis=1)
+    
+    # Count how often each checkpoint is the best
+    best_counts = np.bincount(best_checkpoints, minlength=K)
+    best_probs = best_counts / n_samples
+    
+    # Top-k checkpoints by probability
+    prob_indices = np.argsort(-best_probs)[:top_k]
+    top_probs = best_probs[prob_indices]
+    prob_checkpoints = checkpoint_nums[prob_indices]
+    
+    # Decision criteria
+    # 1. Is our current best prediction confident enough?
+    confidence_criterion = best_probs[best_pred_idx] >= confidence
+    
+    # 2. Are the top checkpoints by mean all within tolerance?
+    tolerance_criterion = np.all(rel_diffs[1:] <= tolerance) if len(rel_diffs) > 1 else True
+    
+    # 3. Is the uncertainty in the best checkpoint's performance low enough?
+    uncertainty_criterion = checkpoint_stderrs[best_pred_idx] / checkpoint_means[best_pred_idx] <= tolerance/2
+    
+    # Combine criteria
+    should_stop = confidence_criterion or (tolerance_criterion and uncertainty_criterion)
+    
+    # Prepare diagnostic info
+    diagnostics = {
+        'confidence_in_best': best_probs[best_pred_idx],
+        'confidence_criterion_met': confidence_criterion,
+        'tolerance_criterion_met': tolerance_criterion,
+        'uncertainty_criterion_met': uncertainty_criterion,
+        'relative_stderr': checkpoint_stderrs[best_pred_idx] / checkpoint_means[best_pred_idx],
+        'top_checkpoints_by_mean': list(zip(top_checkpoints, top_means)),
+        'top_checkpoints_by_prob': list(zip(prob_checkpoints, top_probs)),
+        'should_stop': should_stop
+    }
+    
+    return should_stop, diagnostics
+
+#--------------------------------------------------------------------------
 # SET PARAMETERS
 
 fn = 'phi4-math-4claude.txt'
@@ -46,7 +155,7 @@ n_rows, n_cols = 200, 100
 
 init_subset = 0.0 # 0 ==> sample each task once to start 
 
-rank_fraction = 0.5 # 0.1 0.25 0.5
+rank_fraction = 0.25 # 0.1 0.25 0.5
 
 learning_rate = 0.1
 max_iterations = 1000
@@ -58,7 +167,12 @@ sample_max = 0.1
 
 compare_random = True
 
-rand_seed = 321
+rand_seed = 123
+
+# stopping criterion parameters
+tolerance_threshold = 0.005  # 0.5% relative difference tolerance
+confidence_threshold = 0.90  # 90% confidence requirement
+use_stopping_criterion = True  # Flag to enable/disable the stopping criterion
 
 #--------------------------------------------------------------------------
 # Load the Data...
@@ -116,6 +230,9 @@ if synthetic:
 #--------------------------------------------------------------
 # min/max normalize checkpoints
 checkpoints = (checkpoint_nums - checkpoint_nums.min()) / (checkpoint_nums.max() - checkpoint_nums.min())
+
+# TODO: SCALING!!!
+# checkpoints *= 100 #  10  20  50  100
 
 #--------------------------------------------------------------
 
@@ -175,7 +292,7 @@ class MultitaskGPModel(gpytorch.models.ExactGP):
         super(MultitaskGPModel, self).__init__(train_x, train_y, likelihood)
         self.mean_module = gpytorch.means.ConstantMean()
         # self.covar_module = gpytorch.kernels.RBFKernel()
-        lengthscale_prior = gpytorch.priors.NormalPrior(1.0, 0.5)
+        lengthscale_prior = gpytorch.priors.NormalPrior(1.0, 0.25)
         self.covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.RBFKernel(lengthscale_prior=lengthscale_prior))
         if rank is None: rank = num_tasks
         elif rank > num_tasks: rank = num_tasks
