@@ -9,11 +9,31 @@ import gc
 import torch
 import gpytorch
 
-from utils import clear_cuda_tensors
+#--------------------------------------------------------------
 
-#--------------------------------------------------------------------
+def clear_cuda_tensors(target_size=None): # (1, 8192, 32, 96)
+    """Clear tensors of specific size from memory"""
+    
+    # check if cuda is being used
+    if not torch.cuda.is_available():
+        return
+    
+    count = 0
+    for obj in gc.get_objects():
+        try:
+            if torch.is_tensor(obj) and obj.is_cuda:
+                if target_size is None or obj.size() == target_size:
+                    del obj
+                    count += 1
+        except: 
+            pass
+    
+    torch.cuda.empty_cache()
+    gc.collect()
+    # printmain(f"Cleared {count} tensors")
+    print(f"Cleared {count} tensors")
 
-
+# ---------------------------------------------------------------------
 fn = 'phi4-math-4claude.txt'
 # fn = 'phi4-bw-4claude.txt'
 

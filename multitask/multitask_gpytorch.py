@@ -2,51 +2,32 @@ import sys, os
 import numpy as np
 import pandas as pd
 import random
-import time
+import math
 from scipy.stats import norm
 from matplotlib import pyplot as plt
 import gc
 import torch
 import gpytorch
-# import gpytorch.constraints
 
+from utils import clear_cuda_tensors, log_h, logEI
 from multitask_synthetic import generate_synthetic_checkpoint_data
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 torch.set_default_dtype(torch.float64)
-
 rand_seed = -1
-
-#--------------------------------------------------------------------------
-# UTILITY FUNCTIONS
-def clear_cuda_tensors(target_size=None): # (1, 8192, 32, 96)
-    """Clear tensors of specific size from memory"""
-    if not torch.cuda.is_available():
-        return
-    count = 0
-    for obj in gc.get_objects():
-        try:
-            if torch.is_tensor(obj) and obj.is_cuda:
-                if target_size is None or obj.size() == target_size:
-                    del obj
-                    count += 1
-        except: 
-            pass
-    torch.cuda.empty_cache()
-    gc.collect()
-    print(f"Cleared {count} tensors")
 
 #--------------------------------------------------------------------------
 # SET PARAMETERS
 
-fn = 'phi4-math-4claude.txt'
-# fn = 'phi4-bw-4claude.txt'
+# fn = 'phi4-math-4claude.txt'
+fn = 'phi4-bw-4claude.txt'
 
 synthetic = False
 n_rows, n_cols = 200, 100
 
 init_subset = 0.0 # 0 ==> sample each task once to start 
 
-rank_fraction = 0.5 # 0.1 0.25 0.5
+rank_fraction = 0.25 # 0.1 0.25 0.5
 
 learning_rate = 0.1
 max_iterations = 1000
@@ -55,10 +36,11 @@ patience = 10
 
 log_interval = 5
 sample_max = 0.1
+use_logei = True
 
-compare_random = True
+compare_random = False
 
-rand_seed = 321
+rand_seed = 618
 
 #--------------------------------------------------------------------------
 # Load the Data...
@@ -95,8 +77,8 @@ random.seed(rand_seed)
 # detect if running on local machine
 local = os.path.exists('/home/david')
 
-#--------------------------------------------------------------
-# generate synthetic data
+#-------------------------------------------------------------------------
+# generate synthetic data (?)
 
 if synthetic:
     fn = f'{data_dir}/synthetic_{n_rows}x{n_cols}_seed{rand_seed}.npy'
@@ -113,33 +95,30 @@ if synthetic:
     # set checkpoint numbers to 50, 100, 150, ...
     checkpoint_nums = 50*np.arange(n_rows) + 50
 
-#--------------------------------------------------------------
+#-------------------------------------------------------------------------
+# Full data
+K,Z = V.shape
+sampled_mask = np.zeros_like(V, dtype=bool)
+indices = np.where(np.ones_like(V))
+
 # min/max normalize checkpoints
 checkpoints = (checkpoint_nums - checkpoint_nums.min()) / (checkpoint_nums.max() - checkpoint_nums.min())
 
-#--------------------------------------------------------------
+N = len(indices[0]) # total number of (x,z) checkpoint-task pairs (N = K*Z)
+X = np.array([ [checkpoints[i], j] for i, j in  zip(*indices) ])
+Y = V[indices]
 
-# get mean of each row
+# Full test data grid (all-checkpoints X all-tasks)
+full_test_X = torch.tensor(X[:,0], dtype=torch.float32).to(device)
+full_test_T = torch.tensor(X[:,1], dtype=torch.long).reshape(-1,1).to(device)
+
+# get mean at each checkpoint
 V_mu = V.mean(axis=1)
 
 # find best checkpoint
 best_idx = np.argmax(V_mu)
 best_checkpoint = checkpoint_nums[best_idx]
-print(f'Best checkpoint: {best_checkpoint}')
-
-#-------------------------------------------------------------------------
-# Full data
-K,Z = V.shape
-
-indices = np.where(np.ones_like(V))
-N = len(indices[0]) # total number of (x,z) checkpoint-task pairs
-X = np.array([ [checkpoints[i], j] for i, j in  zip(*indices) ])
-Y = V[indices]
-
-sampled_mask = np.zeros_like(V, dtype=bool)
-
-full_test_X = torch.tensor(X[:,0], dtype=torch.float32)
-full_test_T = torch.tensor(X[:,1], dtype=torch.long).reshape(-1,1)
+print(f'True Best checkpoint: {best_checkpoint}')
 
 #--------------------------------------------------------------------------
 
@@ -333,8 +312,11 @@ class MultitaskGPSequentialSampler:
         self.model.eval()
         self.likelihood.eval()
         
-        test_x = test_x.to(self.device)
-        test_t = test_t.to(self.device)
+        # check if test data is on the same device as the model
+        if test_x.device != self.device:
+            test_x = test_x.to(self.device)
+        if test_t.device != self.device:
+            test_t = test_t.to(self.device)
         
         with torch.no_grad(), gpytorch.settings.fast_pred_var():
             y_pred = self.likelihood(self.model(test_x, test_t))
@@ -435,54 +417,71 @@ while True:
             plt.title('Predicted Average Performance')
             plt.show()
         #--------------------------------------------------------------
-        
+    
+    
+    #--------------------------------------------------------------
+    # Compute Expected Improvement
+    
     # compute S_mu, S_max
     S_mu = y_mean.sum(axis=-1)
     S_max_idx = np.argmax(S_mu)
     S_max = S_mu[S_max_idx]
 
     unsampled_indices = np.where(~sampled_mask)
-    # X_unsampled = np.array([ [i, j] for i, j in  zip(*unsampled_indices) ])
     X_unsampled = np.array(unsampled_indices).T
+    
     # get list of unsamplesd tasks, if any
     unsampled_tasks = np.setdiff1d(np.arange(Z), np.unique(np.where(sampled_mask)[1]))
     
-    #--------------------------------------------------------------
     # Get indices as arrays
     i_indices, j_indices = unsampled_indices
+    
     # Create mask for unsampled tasks check
     mask = np.ones(len(i_indices), dtype=bool)
     if unsampled_tasks.size > 0:
         mask = np.isin(j_indices, unsampled_tasks)
-    # Initialize EI array with -100 for invalid entries
-    EI = np.full(len(i_indices), -100.0)
+        
+    # Initialize EI array with -inf for invalid entries
+    EI = np.full(len(i_indices), -math.inf)
 
     # Only compute for valid indices
-    if np.any(mask):
-        valid_i = i_indices[mask]
-        valid_j = j_indices[mask]
+    # if np.any(mask):
+    
+    # make EI vector just random numbers instead
+    if compare_random: 
+        ei = np.random.rand(mask.shape[0])
+    
+    #----------------------------------------------------------------
+    else:
+        # EI computation
+        valid_i, valid_j = i_indices[mask], j_indices[mask]
+        
         # Vectorized computation of all EI components
         mu = y_mean[valid_i, valid_j]
         sig = y_var[valid_i, valid_j]**0.5
+        
         # Get row sums for each valid i
         row_sums = np.sum(y_mean[valid_i, :], axis=1)
         sx = row_sums - mu
-        # compute ei
+        
+        # improvement vector, z-scores
         s_max = S_max - sx
         imp = mu - s_max # - beta
         z = imp/sig
-        ei = imp * norm.cdf(z) + sig * norm.pdf(z)
-        
-        # make ei just random numbers
-        if compare_random: 
-            ei = np.random.rand(len(ei))
-        
-        # Assign computed values to valid positions
-        EI[mask] = ei
-        
-    EI = np.array(EI)  # Ensure it's a numpy array
 
-    #--------------------------------------------------------------
+        if use_logei:
+            # logEI computation (for stability)
+            ei = np.log(sig) + log_h(torch.tensor(z, dtype=torch.float64)).numpy()
+            # ei_values = np.exp(ei)
+        else:
+            # EI computation
+            ei = imp * norm.cdf(z) + sig * norm.pdf(z)
+        
+    #----------------------------------------------------------------
+    
+    # Assign computed values to valid positions
+    EI[mask] = ei
+    EI = np.array(EI)
     
     next_idx = np.argmax(EI)
     next_i, next_j = X_unsampled[next_idx]
