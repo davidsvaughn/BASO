@@ -13,7 +13,6 @@ from utils import clear_cuda_tensors
 
 #--------------------------------------------------------------------
 
-
 fn = 'phi4-math-4claude.txt'
 # fn = 'phi4-bw-4claude.txt'
 
@@ -128,8 +127,8 @@ train_Y = torch.tensor(Y_sample, dtype=torch.float32)
 
 #--------------------------------------------------------------------------
 
-lengthscale_constraint=gpytorch.constraints.GreaterThan(1.0)
-lengthscale_prior = gpytorch.priors.GammaPrior(3.0, 1.0)  # Higher alpha/beta ratio = larger values
+# lengthscale_constraint=gpytorch.constraints.GreaterThan(1.0)
+# lengthscale_prior = gpytorch.priors.GammaPrior(3.0, 1.0)  # Higher alpha/beta ratio = larger values
 
 class MultitaskGPModel(gpytorch.models.ExactGP):
     def __init__(self, train_x, train_y, likelihood, num_tasks, rank=None):
@@ -137,17 +136,21 @@ class MultitaskGPModel(gpytorch.models.ExactGP):
         if rank is None: rank = num_tasks
         elif rank>num_tasks: rank = num_tasks
         elif rank<1: rank = int(num_tasks*rank)
+        
         self.mean_module = gpytorch.means.MultitaskMean(
             gpytorch.means.ConstantMean(), num_tasks=num_tasks
         )
+        
+        lengthscale_prior = gpytorch.priors.NormalPrior(0.5, 0.1)
+        # self.covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.RBFKernel(lengthscale_prior=lengthscale_prior))
+        
         self.covar_module = gpytorch.kernels.MultitaskKernel(
             gpytorch.kernels.RBFKernel(),
-            # gpytorch.kernels.RBFKernel(lengthscale_constraint=lengthscale_constraint),
             # gpytorch.kernels.RBFKernel(lengthscale_prior=lengthscale_prior),
-            # gpytorch.kernels.MaternKernel(),#nu=2.5),
+            # gpytorch.kernels.ScaleKernel(gpytorch.kernels.RBFKernel(lengthscale_prior=lengthscale_prior)),
             num_tasks=num_tasks, rank=rank,
         )
-
+        
     def forward(self, x):
         mean_x = self.mean_module(x)
         covar_x = self.covar_module(x)
@@ -169,7 +172,7 @@ train_y = torch.tensor(V, dtype=torch.float32)
 # min/max normalize train_x
 train_x = (train_x - train_x.min()) / (train_x.max() - train_x.min())
 # mult by 10
-train_x = train_x * 10
+train_x = train_x * 5
 
 
 numtasks = train_y.size(-1)
@@ -186,7 +189,7 @@ optimizer = torch.optim.Adam(model.parameters(), lr=0.01)  # Includes GaussianLi
 # "Loss" for GPs - the marginal log likelihood
 mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
 
-training_iterations = 800
+training_iterations = 1000
 
 for i in range(training_iterations):
     optimizer.zero_grad()
@@ -194,7 +197,15 @@ for i in range(training_iterations):
     loss = -mll(output, train_y)
     loss.backward()
     if i % 10 == 0:
-        print('Iter %d/%d - Loss: %.3f, lengthscale: %.3f' % (i + 1, training_iterations, loss.item(), model.covar_module.data_covar_module.lengthscale.item()))
+        try:
+            lenscale = model.covar_module.data_covar_module.lengthscale.item()
+        except:
+            try:
+                lenscale = model.covar_module.base_kernel.data_covar_module.lengthscale.item()
+            except:
+                lenscale = model.covar_module.data_covar_module.base_kernel.lengthscale.item()
+            
+        print('Iter %d/%d - Loss: %.3f, lengthscale: %.3f' % (i + 1, training_iterations, loss.item(), lenscale))
     optimizer.step()
     
 # print lengthscale of RBF kernel
