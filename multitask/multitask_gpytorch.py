@@ -1,5 +1,4 @@
 import sys, os
-import gpytorch.constraints
 import numpy as np
 import pandas as pd
 import random
@@ -9,9 +8,13 @@ from matplotlib import pyplot as plt
 import gc
 import torch
 import gpytorch
+# import gpytorch.constraints
+
 from multitask_synthetic import generate_synthetic_checkpoint_data
 
 torch.set_default_dtype(torch.float64)
+
+rand_seed = -1
 
 #--------------------------------------------------------------
 
@@ -32,9 +35,32 @@ def clear_cuda_tensors(target_size=None): # (1, 8192, 32, 96)
     gc.collect()
     print(f"Cleared {count} tensors")
 
-# ---------------------------------------------------------------------
+#--------------------------------------------------------------------------
+# SET PARAMETERS
+
 fn = 'phi4-math-4claude.txt'
 # fn = 'phi4-bw-4claude.txt'
+
+synthetic = False
+n_rows, n_cols = 80, 120
+
+init_subset = 0.0 # 0 ==> sample each task once to start 
+
+rank_fraction = 0.25 # 0.1 0.25 0.5
+
+learning_rate = 0.1
+max_iterations = 1000
+tolerance = 1e-4
+patience = 10
+
+log_interval = 5
+sample_max = 0.1
+
+compare_random = False
+
+# rand_seed = 333
+
+#--------------------------------------------------------------------------
 
 # Load the Data...
 # We'll assume you have a CSV with columns:
@@ -61,25 +87,31 @@ print(V.shape)
 
 #--------------------------------------------------------------
 # random seed
-rand_seed = np.random.randint(100, 1000)
-# rand_seed = 333 # 314 737 ###     605 286 111
+rand_seed = np.random.randint(100, 1000) if rand_seed <= 0 else rand_seed
 print(f'Random seed: {rand_seed}')
 np.random.seed(rand_seed)
 random.seed(rand_seed)
 
+# detect if running on local machine
+local = os.path.exists('/home/david')
+
 #--------------------------------------------------------------
 # generate synthetic data
-n_rows = 80
-n_cols = 120
 
-# fn = f'{current_dir}/synthetic_{n_rows}x{n_cols}_seed{rand_seed}.npy'
-# if os.path.exists(fn):
-#     D = np.load(fn)
-# else:
-#     D = generate_synthetic_checkpoint_data(V, n_rows, n_cols, random_state=rand_seed)
-#     np.save(fn, D)
-# checkpoint_nums = 50*np.arange(n_rows) + 50
-# V = D
+if synthetic:
+    fn = f'{data_dir}/synthetic_{n_rows}x{n_cols}_seed{rand_seed}.npy'
+    if os.path.exists(fn):
+        print(f'Loading synthetic data from: {fn}')
+        V = np.load(fn)
+    else:
+        print(f'Generating synthetic data...')
+        D = generate_synthetic_checkpoint_data(V, n_rows, n_cols, random_state=rand_seed)
+        print(f'Saving synthetic data to: {fn}')
+        np.save(fn, D)
+        V = D
+        del D
+    # set checkpoint numbers to 50, 100, 150, ...
+    checkpoint_nums = 50*np.arange(n_rows) + 50
 
 #--------------------------------------------------------------
 # min/max normalize checkpoints
@@ -112,23 +144,6 @@ sampled_mask = np.zeros_like(V, dtype=bool)
 full_test_X = torch.tensor(X[:,0], dtype=torch.float32)
 full_test_T = torch.tensor(X[:,1], dtype=torch.long).reshape(-1,1)
 
-#--------------------------------------------------------------------------
-# set parameters
-
-init_subset = 0.0
-
-rank_fraction = 0.25 # 0.1 0.25 0.5
-# rank_fraction = 0.1
-
-learning_rate = 0.1
-max_iterations = 1000
-tolerance = 1e-4
-patience = 10
-
-log_interval = 5
-sample_max = 0.1
-
-compare_random = False
 #--------------------------------------------------------------------------
 
 if init_subset > 0:
@@ -384,30 +399,31 @@ while True:
     
     if step % log_interval == 0:
         clear_cuda_tensors()
-        plt.plot(checkpoint_nums, S_mean)
-        # set y axis bounds
-        plt.ylim([0.81, 0.86])
-        
-        #--------------------------------------------------------------
-        S_sigma = np.zeros(K)
-        for k in range(K):
-            # Extract the Z×Z covariance matrix for checkpoint k
-            task_cov_matrix = y_covar[k, :, k, :]
-            # Variance of mean = (1/Z²) * sum of all elements in covariance matrix
-            S_sigma[k] = np.sqrt(task_cov_matrix.sum()) / Z
-        #--------------------------------------------------------------
-        
-        plt.fill_between(checkpoint_nums, S_mean - 2*S_sigma, S_mean + 2*S_sigma, alpha=0.5)
-        plt.xlabel('Checkpoint')
-        plt.ylabel('Average Performance')
-        plt.title('Predicted Average Performance')
-        plt.show()
         
         #--------------------------------------------------------------
         print()
         for bpc in best_pred_checkpoints:
             print(f'{bpc}')
         print()
+        
+        #--------------------------------------------------------------
+        if local:
+            plt.plot(checkpoint_nums, S_mean)
+            plt.ylim([0.81, 0.86])
+            #-----------------------------------
+            # compute standard deviation of mean
+            S_sigma = np.zeros(K)
+            for k in range(K):
+                # Extract the Z×Z covariance matrix for checkpoint k
+                task_cov_matrix = y_covar[k, :, k, :]
+                # Variance of mean = (1/Z²) * sum of all elements in covariance matrix
+                S_sigma[k] = np.sqrt(task_cov_matrix.sum()) / Z
+            #-----------------------------------
+            plt.fill_between(checkpoint_nums, S_mean - 2*S_sigma, S_mean + 2*S_sigma, alpha=0.5)
+            plt.xlabel('Checkpoint')
+            plt.ylabel('Average Performance')
+            plt.title('Predicted Average Performance')
+            plt.show()
         #--------------------------------------------------------------
         
     # compute S_mu, S_max
