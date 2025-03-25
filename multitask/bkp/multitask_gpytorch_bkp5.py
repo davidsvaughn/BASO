@@ -9,9 +9,7 @@ from matplotlib import pyplot as plt
 import gc
 import torch
 import gpytorch
-from multitask_synthetic import generate_synthetic_checkpoint_data
-
-torch.set_default_dtype(torch.float64)
+# from botorch import fit_gpytorch_model
 
 #--------------------------------------------------------------
 
@@ -50,47 +48,20 @@ df = pd.read_csv(os.path.join(data_dir, fn), delimiter='\t')
 # df = pd.read_csv('data/phi4-math-4claude.txt', delimiter='\t')
 
 # Extract checkpoint numbers
-checkpoint_nums = df['CHECKPOINT'].apply(lambda x: int(x.split('-')[1])).values
-
+checkpoint_nums = df['CHECKPOINT'].apply(lambda x: int(x.split('-')[1])).values   
 # Identify test columns (excluding average)
 test_cols = [col for col in df.columns if col.startswith('TEST_') and col != 'TEST_AVERAGE']
-
-# raw data
-V = df[test_cols].values
-print(V.shape)
-
-#--------------------------------------------------------------
-# random seed
-rand_seed = np.random.randint(100, 1000)
-# rand_seed = 333 # 314 737 ###     605 286 111
-print(f'Random seed: {rand_seed}')
-np.random.seed(rand_seed)
-random.seed(rand_seed)
-
-#--------------------------------------------------------------
-# generate synthetic data
-n_rows = 80
-n_cols = 120
-
-# fn = f'{current_dir}/synthetic_{n_rows}x{n_cols}_seed{rand_seed}.npy'
-# if os.path.exists(fn):
-#     D = np.load(fn)
-# else:
-#     D = generate_synthetic_checkpoint_data(V, n_rows, n_cols, random_state=rand_seed)
-#     np.save(fn, D)
-# checkpoint_nums = 50*np.arange(n_rows) + 50
-# V = D
 
 #--------------------------------------------------------------
 # min/max normalize checkpoints
 checkpoints = (checkpoint_nums - checkpoint_nums.min()) / (checkpoint_nums.max() - checkpoint_nums.min())
 
 # TODO: SCALING!!!
-# checkpoints *= 100 #  10  20  50  100
-
+checkpoints *= 20 #  10  20  50  100
 #--------------------------------------------------------------
 
-# get mean of each row
+V = df[test_cols].values
+print(V.shape)
 V_mu = V.mean(axis=1)
 
 # find best checkpoint
@@ -100,12 +71,12 @@ print(f'Best checkpoint: {best_checkpoint}')
 
 #-------------------------------------------------------------------------
 # Full data
-K,Z = V.shape
-
 indices = np.where(np.ones_like(V))
 N = len(indices[0]) # total number of (x,z) checkpoint-task pairs
 X = np.array([ [checkpoints[i], j] for i, j in  zip(*indices) ])
 Y = V[indices]
+Z = len(test_cols) # number of tasks/validation sets
+K = len(checkpoints) # number of checkpoints
 
 sampled_mask = np.zeros_like(V, dtype=bool)
 
@@ -113,9 +84,18 @@ full_test_X = torch.tensor(X[:,0], dtype=torch.float32)
 full_test_T = torch.tensor(X[:,1], dtype=torch.long).reshape(-1,1)
 
 #--------------------------------------------------------------------------
+# sample subset of data
+
+rand_seed = np.random.randint(100, 1000)
+# rand_seed = 737 # 260 737 ###     605 286 111
+print(f'Random seed: {rand_seed}')
+np.random.seed(rand_seed)
+random.seed(rand_seed)
+
+#--------------------------------------------------------------------------
 # set parameters
 
-init_subset = 0.0
+init_subset = 0.05
 
 rank_fraction = 0.25 # 0.1 0.25 0.5
 # rank_fraction = 0.1
@@ -125,10 +105,9 @@ max_iterations = 1000
 tolerance = 1e-4
 patience = 10
 
-log_interval = 5
-sample_max = 0.1
+beta = 0.0
 
-compare_random = False
+log_interval = 5
 #--------------------------------------------------------------------------
 
 if init_subset > 0:
@@ -163,14 +142,22 @@ class MultitaskGPModel(gpytorch.models.ExactGP):
         super(MultitaskGPModel, self).__init__(train_x, train_y, likelihood)
         self.mean_module = gpytorch.means.ConstantMean()
         # self.covar_module = gpytorch.kernels.RBFKernel()
-        lengthscale_prior = gpytorch.priors.NormalPrior(1.0, 0.25)
-        self.covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.RBFKernel(lengthscale_prior=lengthscale_prior))
+        self.covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.RBFKernel())
+        
+        # https://docs.gpytorch.ai/en/v1.12/examples/00_Basic_Usage/Hyperparameters.html#Priors
+        # lengthscale_prior = gpytorch.priors.GammaPrior(3.0, 6.0)
+        # self.covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.RBFKernel(lengthscale_prior=lengthscale_prior,))
+        #--------------------------------------------------------------------------
+        # We learn an IndexKernel for 2 tasks
+        # (so we'll actually learn 2x2=4 tasks with correlations)
         if rank is None: rank = num_tasks
         elif rank > num_tasks: rank = num_tasks
         elif rank < 1: rank = int(num_tasks*rank)
         self.task_covar_module = gpytorch.kernels.IndexKernel(num_tasks=num_tasks, rank=rank)
+        # self.task_covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.IndexKernel(num_tasks=num_tasks, rank=rank))
 
     def forward(self, x, i):
+        # x, i = inputs
         mean_x = self.mean_module(x)
         # Get input-input covariance
         covar_x = self.covar_module(x)
@@ -179,97 +166,24 @@ class MultitaskGPModel(gpytorch.models.ExactGP):
         # Multiply the two together to get the covariance we want
         covar = covar_x.mul(covar_i)
         return gpytorch.distributions.MultivariateNormal(mean_x, covar)
-    
-def optimize_adam(model, likelihood, train_x, train_t, train_y, 
-                  max_iterations=1000, 
-                  lr=0.1, 
-                  lr_scheduler='step',
-                  lr_gamma=0.9, 
-                  lr_step_size=50, 
-                  lr_min=1e-3,
-                  log_every=50,
-                  tolerance=1e-4, 
-                  patience=10):
-    model.train()
-    likelihood.train()
-    
-    # "Loss" for GPs - the marginal log likelihood
-    mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
-    
-    # Use the adam optimizer
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-    
-    # Set up learning rate scheduler
-    if lr_scheduler == 'step':
-        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=lr_step_size, gamma=lr_gamma)
-    elif lr_scheduler == 'exp':
-        scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=lr_gamma)
-    elif lr_scheduler == 'cosine':
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=max_iterations, eta_min=lr_min)
-    elif lr_scheduler == 'plateau':
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=lr_gamma, 
-                                                            patience=patience//2, threshold=tolerance, verbose=True)
-    else:  # No scheduler
-        scheduler = None
-        
-    stall_counter, prev_loss = 0, float('inf')
-    for i in range(max_iterations):
-        optimizer.zero_grad()
-        output = model(train_x, train_t)
-        loss = -mll(output, train_y)
-        loss.backward()
-        optimizer.step()
-        # Update learning rate
-        if scheduler is not None:
-            if lr_scheduler == 'plateau':
-                scheduler.step(loss.item())
-            else:
-                scheduler.step()
-        # Check convergence
-        current_loss = loss.item()
-        rel_improvement = (prev_loss - current_loss) / (abs(prev_loss) + 1e-10)
-        
-        if i % log_every == 0:  # Log occasionally
-            current_lr = optimizer.param_groups[0]['lr']
-            try:
-                lengthscale = model.covar_module.base_kernel.lengthscale.item()
-                noise = model.likelihood.noise.item()
-                print(f'Iter={i} \tLoss={current_loss:.3g} \tImp={rel_improvement:.3g}\tLR={current_lr:.3g}\tLenScale={lengthscale:.3g}\tNoise={noise:.3g}')
-            except Exception as e:
-                print(f'Iter={i} \tLoss={current_loss:.3g} \tImp={rel_improvement:.3g}\tLR={current_lr:.3g}')
-                # print(f'Iter={i}\tLoss={current_loss:.5f}\tImp={rel_improvement:.5f}\tLR={current_lr:.6f}')
-            
-            
-        stall_counter = stall_counter+1 if rel_improvement < tolerance else 0
-        if stall_counter >= patience:
-            print(f'Stopping early at iteration {i} - Loss converged')
-            break
-        prev_loss = current_loss
-
 
 #--------------------------------------------------------------------------
 class MultitaskGPSequentialSampler:
     def __init__(self, num_tasks, rank, 
-                 max_iterations=1000, 
+                 max_iterations=100, 
                  learning_rate=0.1, 
+                 beta=0.05,
                  lr_scheduler='step',
                  lr_gamma=0.9,
                  lr_step_size=50,
                  lr_min=1e-3,
-                 warm_start=False,
                  ):
         self.num_tasks = num_tasks
         self.rank = rank
         self.max_iterations = max_iterations
         self.learning_rate = learning_rate
-        self.warm_start = warm_start
+        self.beta = beta
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        
-        # model parameters
-        self.model = None
-        self.likelihood = None
-        self.model_state = None
-        self.likelihood_state = None
         
         # Learning rate schedule parameters
         self.lr_scheduler = lr_scheduler  # 'step', 'exp', 'cosine', 'plateau'
@@ -278,42 +192,72 @@ class MultitaskGPSequentialSampler:
         self.lr_min = lr_min  # minimum learning rate
         
     #--------------------------------------------------------------------------
-    def fit(self, train_x, train_t, train_y, 
-            tolerance=tolerance, 
-            patience=patience,
-            warm_start=None,
-            ):
+    def fit(self, train_x, train_t, train_y, tolerance=tolerance, patience=patience):
         train_x = train_x.to(self.device)
         train_t = train_t.to(self.device)
         train_y = train_y.to(self.device)
         
-        # Create a new model instance with current data
         self.likelihood = gpytorch.likelihoods.GaussianLikelihood().to(self.device)
         self.model = MultitaskGPModel((train_x, train_t), train_y, self.likelihood, self.num_tasks, rank=self.rank).to(self.device)
+        self.likelihood.train()
+        self.model.train()
         
-        # override self.warm_start if specified
-        warm_start = warm_start if warm_start is not None else self.warm_start
+        # "Loss" for GPs - the marginal log likelihood
+        mll = gpytorch.mlls.ExactMarginalLogLikelihood(self.likelihood, self.model)
         
-        # Load previous model parameters if warm starting
-        if warm_start and self.model_state is not None:
-            self.model.load_state_dict(self.model_state)
-            self.likelihood.load_state_dict(self.likelihood_state)
+        # Use the adam optimizer
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=self.learning_rate)
         
-        optimize_adam(self.model, self.likelihood, train_x, train_t, train_y,
-                      max_iterations=self.max_iterations,
-                      lr=self.learning_rate,
-                      lr_scheduler=self.lr_scheduler,
-                      lr_gamma=self.lr_gamma,
-                      lr_step_size=self.lr_step_size,
-                      lr_min=self.lr_min,
-                      tolerance=tolerance,
-                      patience=patience)
+        # Set up learning rate scheduler
+        if self.lr_scheduler == 'step':
+            scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=self.lr_step_size, gamma=self.lr_gamma)
+        elif self.lr_scheduler == 'exp':
+            scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=self.lr_gamma)
+        elif self.lr_scheduler == 'cosine':
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=self.max_iterations, eta_min=self.lr_min)
+        elif self.lr_scheduler == 'plateau':
+            scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=self.lr_gamma, 
+                                                                patience=patience//2, threshold=tolerance, verbose=True)
+        else:  # No scheduler
+            scheduler = None
         
-        # Save model parameters for warm starting
-        if self.warm_start:
-            self.model_state = self.model.state_dict()
-            self.likelihood_state = self.likelihood.state_dict()
+        # For tracking convergence
+        prev_loss = float('inf')
+        stall_counter = 0
         
+        for i in range(self.max_iterations):
+            optimizer.zero_grad()
+            output = self.model(train_x, train_t)
+            loss = -mll(output, train_y)
+            loss.backward()
+            optimizer.step()
+            
+            # Update learning rate
+            if scheduler is not None:
+                if self.lr_scheduler == 'plateau':
+                    scheduler.step(loss.item())
+                else:
+                    scheduler.step()
+            
+            # Check convergence
+            current_loss = loss.item()
+            rel_improvement = (prev_loss - current_loss) / (abs(prev_loss) + 1e-10)
+            
+            if i % 50 == 0:  # Log occasionally
+                current_lr = optimizer.param_groups[0]['lr']
+                # print(f'Iter {i} - Loss: {current_loss:.5f}, Improvement: {rel_improvement:.5f}')
+                print(f'Iter {i} - Loss: {current_loss:.5f}, Improvement: {rel_improvement:.5f}, LR: {current_lr:.6f}')
+                
+            if rel_improvement < tolerance:
+                stall_counter += 1
+            else:
+                stall_counter = 0
+                
+            if stall_counter >= patience:
+                print(f'Stopping early at iteration {i} - Loss converged')
+                break
+                
+            prev_loss = current_loss
     
     #--------------------------------------------------------------------------
     
@@ -324,18 +268,15 @@ class MultitaskGPSequentialSampler:
         test_x = test_x.to(self.device)
         test_t = test_t.to(self.device)
         
-        with torch.no_grad(), gpytorch.settings.fast_pred_var():
+        with torch.no_grad():#, gpytorch.settings.fast_pred_var():
             y_pred = self.likelihood(self.model(test_x, test_t))
         return y_pred
 
 #--------------------------------------------------------------------------
 sampler = MultitaskGPSequentialSampler(num_tasks=Z, 
                                        rank=rank_fraction,
-                                       max_iterations=max_iterations,
-                                       lr_scheduler='step',
-                                       learning_rate=learning_rate, 
-                                       warm_start=True,
-                                       )
+                                       max_iterations=max_iterations, 
+                                       learning_rate=learning_rate, beta=beta)
 #--------------------------------------------------------------------------
 
 # get list of sampled tasks
@@ -345,18 +286,16 @@ unsampled_tasks = np.setdiff1d(np.arange(Z), np.unique(np.where(sampled_mask)[1]
 # keep track of fraction of iterations where the next checkpoint sampled is the current best checkpoint
 best_checkpoint_sampled = 0
 
-best_pred_checkpoints = []
-
 step = 0
 while True:
     step += 1
     # compute percent of data sampled
     fraction_sampled = sampled_mask.sum() / N
     
-    if fraction_sampled > sample_max:
+    if fraction_sampled >= 0.2:
         break
 
-    sampler.fit(train_X, train_T, train_Y, warm_start=step%5!=0) # reset model parameters every 10 steps
+    sampler.fit(train_X, train_T, train_Y)
 
     y_pred = sampler.predict(full_test_X, full_test_T)
     y_mean = y_pred.mean.detach().cpu().numpy() # shape = (num_x * num_z)
@@ -375,8 +314,6 @@ while True:
 
     best_pred_idx = np.argmax(S_mean)
     best_pred_checkpoint = checkpoint_nums[best_pred_idx]
-    best_pred_checkpoints.append(best_pred_checkpoint)
-    
 
     # print(f'\nBest checkpoint: {best_checkpoint}')
     print(f'\nStep {step}: % sampled={100*fraction_sampled:.2f}%')
@@ -384,7 +321,7 @@ while True:
     
     if step % log_interval == 0:
         clear_cuda_tensors()
-        plt.plot(checkpoint_nums, S_mean)
+        plt.plot(checkpoints, S_mean)
         # set y axis bounds
         plt.ylim([0.81, 0.86])
         
@@ -397,18 +334,11 @@ while True:
             S_sigma[k] = np.sqrt(task_cov_matrix.sum()) / Z
         #--------------------------------------------------------------
         
-        plt.fill_between(checkpoint_nums, S_mean - 2*S_sigma, S_mean + 2*S_sigma, alpha=0.5)
+        plt.fill_between(checkpoints, S_mean - 2*S_sigma, S_mean + 2*S_sigma, alpha=0.5)
         plt.xlabel('Checkpoint')
         plt.ylabel('Average Performance')
         plt.title('Predicted Average Performance')
         plt.show()
-        
-        #--------------------------------------------------------------
-        print()
-        for bpc in best_pred_checkpoints:
-            print(f'{bpc}')
-        print()
-        #--------------------------------------------------------------
         
     # compute S_mu, S_max
     S_mu = y_mean.sum(axis=-1)
@@ -422,12 +352,15 @@ while True:
     unsampled_tasks = np.setdiff1d(np.arange(Z), np.unique(np.where(sampled_mask)[1]))
     
     #--------------------------------------------------------------
+    # start = time.time()
     # Get indices as arrays
     i_indices, j_indices = unsampled_indices
+
     # Create mask for unsampled tasks check
     mask = np.ones(len(i_indices), dtype=bool)
     if unsampled_tasks.size > 0:
         mask = np.isin(j_indices, unsampled_tasks)
+
     # Initialize EI array with -100 for invalid entries
     EI = np.full(len(i_indices), -100.0)
 
@@ -435,27 +368,30 @@ while True:
     if np.any(mask):
         valid_i = i_indices[mask]
         valid_j = j_indices[mask]
+        
         # Vectorized computation of all EI components
         mu = y_mean[valid_i, valid_j]
         sig = y_var[valid_i, valid_j]**0.5
+        
         # Get row sums for each valid i
         row_sums = np.sum(y_mean[valid_i, :], axis=1)
         sx = row_sums - mu
-        # compute ei
+        
         s_max = S_max - sx
-        imp = mu - s_max # - beta
+        imp = mu - s_max - beta
         z = imp/sig
         ei = imp * norm.cdf(z) + sig * norm.pdf(z)
         
-        # make ei just random numbers
-        if compare_random: 
-            ei = np.random.rand(len(ei))
-        
         # Assign computed values to valid positions
         EI[mask] = ei
-        
-    EI = np.array(EI)  # Ensure it's a numpy array
 
+    EI = np.array(EI)  # Ensure it's a numpy array
+    # end = time.time()
+    # print(f'EI computation time: {end-start:.2g} seconds')
+    
+    # compare to _EI
+    # assert np.allclose(EI, _EI, atol=1e-5), f'EI mismatch at step {step}'
+    
     #--------------------------------------------------------------
     
     next_idx = np.argmax(EI)

@@ -8,6 +8,8 @@ __pycache__/
 
 # dsv
 *.png
+*.npy
+
 
 # Distribution / packaging
 .Python

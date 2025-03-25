@@ -125,6 +125,8 @@ max_iterations = 1000
 tolerance = 1e-4
 patience = 10
 
+beta = 0.0
+
 log_interval = 5
 sample_max = 0.1
 
@@ -252,6 +254,7 @@ class MultitaskGPSequentialSampler:
     def __init__(self, num_tasks, rank, 
                  max_iterations=1000, 
                  learning_rate=0.1, 
+                 beta=0.0,
                  lr_scheduler='step',
                  lr_gamma=0.9,
                  lr_step_size=50,
@@ -263,6 +266,7 @@ class MultitaskGPSequentialSampler:
         self.max_iterations = max_iterations
         self.learning_rate = learning_rate
         self.warm_start = warm_start
+        self.beta = beta
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
         # model parameters
@@ -312,7 +316,7 @@ class MultitaskGPSequentialSampler:
         # Save model parameters for warm starting
         if self.warm_start:
             self.model_state = self.model.state_dict()
-            self.likelihood_state = self.likelihood.state_dict()
+            self.likelihood_state = self.likelihood.state_dict
         
     
     #--------------------------------------------------------------------------
@@ -334,7 +338,7 @@ sampler = MultitaskGPSequentialSampler(num_tasks=Z,
                                        max_iterations=max_iterations,
                                        lr_scheduler='step',
                                        learning_rate=learning_rate, 
-                                       warm_start=True,
+                                    #    beta=beta,
                                        )
 #--------------------------------------------------------------------------
 
@@ -356,7 +360,7 @@ while True:
     if fraction_sampled > sample_max:
         break
 
-    sampler.fit(train_X, train_T, train_Y, warm_start=step%5!=0) # reset model parameters every 10 steps
+    sampler.fit(train_X, train_T, train_Y)
 
     y_pred = sampler.predict(full_test_X, full_test_T)
     y_mean = y_pred.mean.detach().cpu().numpy() # shape = (num_x * num_z)
@@ -443,7 +447,7 @@ while True:
         sx = row_sums - mu
         # compute ei
         s_max = S_max - sx
-        imp = mu - s_max # - beta
+        imp = mu - s_max - beta
         z = imp/sig
         ei = imp * norm.cdf(z) + sig * norm.pdf(z)
         
