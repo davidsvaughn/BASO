@@ -43,8 +43,8 @@ patience = 5
 sample_max = 0.075 # TODO : or max_num_points_sampled
 
 log_interval = 5
-use_logei = True
 warm_start_interval = -1
+use_logei = True
 
 history_win = 20
 
@@ -500,7 +500,8 @@ while True:
 
         if use_logei:
             # logEI computation (for stability)
-            ei = np.log(sig) + log_h(torch.tensor(z, dtype=torch.float64)).numpy()
+            logh = log_h(torch.tensor(z, dtype=torch.float64)).numpy()
+            ei = np.log(sig) + logh
             ei_values = np.exp(ei)
         else:
             # EI computation
@@ -529,6 +530,10 @@ while True:
     train_Y = torch.cat([train_Y, torch.tensor([V[next_i, next_j]], dtype=torch.float32)])
     
     #----------------------------------------------------------------
+    
+    # TODO
+    max_ei = np.max(logh)
+    
     history.append([step, best_pred_checkpoint, max_ei, y_diff])
     
     if len(history) > history_win:
