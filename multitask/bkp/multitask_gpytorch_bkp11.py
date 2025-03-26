@@ -24,12 +24,12 @@ rand_seed = -1
 fn = 'phi4-math-4claude.txt'
 # fn = 'phi4-bw-4claude.txt'
 
-compare_random = False
+compare_random = True
 
-synthetic = False
-n_rows, n_cols = 100, 100
+synthetic = True
+n_rows, n_cols = 200, 100
 
-# rand_seed = 333
+rand_seed = 111
 
 init_subset = 0.0 # 0 ==> sample each task once to start 
 
@@ -40,13 +40,22 @@ max_iterations = 1000
 tolerance = 1e-4
 patience = 5
 
-sample_max = 0.075 # TODO : or max_num_points_sampled
+sample_max = 0.05 # TODO : or max_num_points_sampled
 
 log_interval = 5
 use_logei = True
 warm_start_interval = -1
 
 history_win = 20
+
+#--------------------------------------------------------------------------
+# Surprise-based stopping criterion
+use_surprise_stopping = False        # Enable surprise-based stopping criterion
+min_surprise_samples = 20           # Minimum samples before considering stopping
+surprise_threshold = 0.6            # Threshold for "not surprising" (lower = more strict)
+surprise_window_size = 5            # Number of consecutive non-surprising samples needed
+min_performance_std = 0.0005        # Minimum std in performance estimates to ensure stability
+surprise_weights = (0.4, 0.3, 0.3)  # Weights for different surprise metrics
 
 #--------------------------------------------------------------------------
 # Load the Data...
@@ -357,6 +366,10 @@ sampler = MultitaskGPSequentialSampler(num_tasks=Z,
                                        warm_start=warm_start_interval>0,
                                        )
 #--------------------------------------------------------------------------
+# Initialize surprise tracker
+surprise_tracker = initialize_surprise_tracker()
+prev_y_mean = None  # Store predictions from previous iteration
+#--------------------------------------------------------------------------
 
 # get list of sampled tasks
 unsampled_tasks = np.setdiff1d(np.arange(Z), np.unique(np.where(sampled_mask)[1]))
@@ -390,7 +403,54 @@ while True:
     y_covar = y_covar.reshape((K, Z, K, Z)) # reshape y_covar back into (num_x, num_z, num_x, num_z)
     
     #--------------------------------------------------------------------------
+    # Compute surprise-based stopping criterion
+    if use_surprise_stopping and step > 1:  # Need at least one previous iteration
+        
+        # Get indices and value of the point we just added in the previous iteration
+        last_i, last_j = next_i, next_j  # These were set at the end of the previous iteration
+        last_observed_value = V[last_i, last_j]
+        
+        stop_flag, surprise_tracker, surprise_diag = surprise_based_stopping(
+            sampler.model,
+            (last_i, last_j),
+            last_observed_value,
+            prev_y_mean,
+            y_mean,
+            y_var,
+            surprise_tracker,
+            checkpoint_nums,
+            step=step,
+            min_samples=min_surprise_samples,
+            surprise_threshold=surprise_threshold,
+            window_size=surprise_window_size,
+            min_window_std=min_performance_std,
+            surprise_weights=surprise_weights
+        )
+        
+        # Log surprise metrics at regular intervals
+        if step % log_interval == 0 or stop_flag:
+            print("\nSurprise metrics:")
+            print(f"  Overall surprise: {surprise_diag['surprise']:.4f}")
+            print(f"  Prediction error: {surprise_diag['prediction_error']:.4f}")
+            print(f"  Model update: {surprise_diag['model_update']:.4f}")
+            print(f"  Best checkpoint changed: {surprise_diag['best_changed']}")
+            print(f"  Recent surprises: {[f'{s:.2f}' for s in surprise_diag['recent_surprises']]}")
+            print(f"  Recent best checkpoints: {surprise_diag['recent_best_checkpoints']}")
+        
+        if stop_flag:
+            print("\n" + "="*100)
+            print(f"STOPPING CRITERION MET at step {step}")
+            print(f"Reason: {surprise_diag['reason']}")
+            print(f"Best checkpoint: {surprise_diag['best_checkpoint']}")
+            print(f"Recent best checkpoints: {surprise_diag['recent_best_checkpoints']}")
+            print(f"Estimated performance: {surprise_diag['best_performance']:.6f}")
+            print("="*100)
+            # break
+        
+     # Store current predictions for next iteration
+    prev_y_mean = y_mean.copy()
     
+    #--------------------------------------------------------------------------
     # compute the mean of the mean predictions across tasks
     S_mean = y_mean.mean(axis=-1)
     best_pred_idx = np.argmax(S_mean)
@@ -411,17 +471,17 @@ while True:
     print(f'Best Chkpt (pred/true):\t{best_pred_checkpoint}/{best_checkpoint}\tx_diff={x_diff:.4f}\ty_diff={y_diff:.4g}')
     
     #--------------------------------------------------------------------------
-    # history.append([step, best_pred_checkpoint, x_diff, y_diff])
+    history.append([step, best_pred_checkpoint, x_diff, y_diff])
     
-    # if len(history) > history_win:
-    #     history_x = np.array(history).astype(np.float32)
-    #     yd = history_x[:,-1]
-    #     yd_ma = np.zeros_like(yd)
-    #     for i in range(len(yd)):
-    #         start = max(0, i - history_win + 1)
-    #         yd_ma[i] = np.mean(yd[start:i+1])
-    #     history_x = np.hstack([history_x, yd_ma.reshape(-1,1)])
-    #     np.savetxt(history_fn, history_x, fmt='%d\t%d\t%.4g\t%.4g\t%.4g')
+    if len(history) > history_win:
+        history_x = np.array(history).astype(np.float32)
+        yd = history_x[:,-1]
+        yd_ma = np.zeros_like(yd)
+        for i in range(len(yd)):
+            start = max(0, i - history_win + 1)
+            yd_ma[i] = np.mean(yd[start:i+1])
+        history_x = np.hstack([history_x, yd_ma.reshape(-1,1)])
+        np.savetxt(history_fn, history_x, fmt='%d\t%d\t%.4g\t%.4g\t%.4g')
     
     if K*Z > 10000: clear_cuda_tensors()
     
@@ -501,11 +561,10 @@ while True:
         if use_logei:
             # logEI computation (for stability)
             ei = np.log(sig) + log_h(torch.tensor(z, dtype=torch.float64)).numpy()
-            ei_values = np.exp(ei)
+            # ei_values = np.exp(ei)
         else:
             # EI computation
             ei = imp * norm.cdf(z) + sig * norm.pdf(z)
-            ei_values = ei
         
     #----------------------------------------------------------------
     
@@ -516,7 +575,6 @@ while True:
     next_idx = np.argmax(EI)
     next_i, next_j = X_unsampled[next_idx]
     next_checkpoint = checkpoint_nums[next_i]
-    max_ei = np.max(ei_values)
     
     # check if next checkpoint is the best checkpoint
     if next_i == best_pred_idx:
@@ -527,16 +585,3 @@ while True:
     train_X = torch.cat([train_X, torch.tensor([checkpoints[next_i]], dtype=torch.float32)])
     train_T = torch.cat([train_T, torch.tensor([next_j], dtype=torch.long).reshape(-1,1)])
     train_Y = torch.cat([train_Y, torch.tensor([V[next_i, next_j]], dtype=torch.float32)])
-    
-    #----------------------------------------------------------------
-    history.append([step, best_pred_checkpoint, max_ei, y_diff])
-    
-    if len(history) > history_win:
-        history_x = np.array(history).astype(np.float32)
-        yd = history_x[:,-1]
-        yd_ma = np.zeros_like(yd)
-        for i in range(len(yd)):
-            start = max(0, i - history_win + 1)
-            yd_ma[i] = np.mean(yd[start:i+1])
-        history_x = np.hstack([history_x, yd_ma.reshape(-1,1)])
-        np.savetxt(history_fn, history_x, fmt='%d\t%d\t%.4g\t%.4g\t%.4g')
