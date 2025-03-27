@@ -13,7 +13,10 @@ torch.set_default_dtype(torch.float64)
 
 # function to convert tensor to numpy, first to cpu if needed
 def to_numpy(x):
-    x = x.cpu() if x.is_cuda else x
+    if x.requires_grad:
+        x = x.detach()
+    if x.is_cuda:
+        x = x.cpu()
     return x.numpy()
 
 #--------------------------------------------------------------------------

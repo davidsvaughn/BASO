@@ -7,11 +7,10 @@ from scipy.stats import norm
 from matplotlib import pyplot as plt
 import torch
 import gpytorch
-import math
 
 from botorch.models import MultiTaskGP
 
-from utils import task_standardize, inv_task_standardize, to_numpy, degree_metric, log_h
+from utils import task_standardize, inv_task_standardize, to_numpy, degree_metric
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 torch.set_default_dtype(torch.float64)
@@ -24,23 +23,25 @@ rank_frac = -1
 fn = 'phi4-math-4claude.txt'
 # fn = 'phi4-bw-4claude.txt'
 
-# rand_seed = 777
+rand_seed = 777
 
-task_sample = 1 # select random subset of tasks
-init_tpc    = 0.05 # number of random tasks per checkpoint (tpc) to initially sample
+task_sample = 0.75 # select random subset of tasks
+init_tpc    = 0.1 # number of random tasks per checkpoint (tpc) to initially sample
              # -> if fraction, tpc++ tpc until that fraction of tasks are sampled
 max_sample = 0.25 # stop BO sampling after this fraction of points are sampled
 
 # MLE estimation
 max_iterations = 1000
 learning_rate = 0.1
-rank_frac = 0.4
+rank_frac = 0.5
 
 # logging intervals
 log_loop = 5
 log_fit = 50
 
-use_logei = True
+
+# rank_fraction = 0.1 # 0.1 0.25 0.5
+# use_logei = True
 
 # compare_random = False
 # synthetic = False
@@ -133,8 +134,11 @@ full_indices = np.where(np.ones_like(V))
 # min/max normalize checkpoints to unit interval (cube)
 checkpoints = (checkpoint_nums - checkpoint_nums.min()) / (checkpoint_nums.max() - checkpoint_nums.min())
 
+# get mean at each checkpoint
+V_mu = V.mean(axis=1)
+
 # find best checkpoint
-best_idx = np.argmax(V.mean(axis=1))
+best_idx = np.argmax(V_mu)
 best_checkpoint = checkpoint_nums[best_idx]
 print(f'TRUE BEST CHECKPOINT: {best_checkpoint}')
 
@@ -281,73 +285,13 @@ class BotorchSampler:
         lower = lower * self.t_sig + self.t_mu
         upper = upper * self.t_sig + self.t_mu
         
-        y_var = y_var * self.t_sig**2
-        y_sig = np.sqrt(y_var)
+        # ###y_var = y_var * self.t_sig**2
         y_mean = y_pred.mean(axis=1)
         y_covar = y_covar * self.t_sig**2
         y_sigma = np.array([np.sqrt(y_covar[i,:,i].sum()) for i in range(k)]) / z
         
         #---------------------------------------------------------------------
-        return y_pred, y_sig, lower, upper, y_mean, y_sigma
-
-#--------------------------------------------------------------------------
-
-def plot_all(train_X, train_Y, test_X, test_Y, y_pred, y_sig, lower, upper, y_mean, y_sigma, max_fig=None):
-    K,Z = test_Y.shape
-    
-    test_Y_mu = test_Y.mean(axis=1)
-    
-    plt.figure(figsize=(15, 10))
-    plt.plot(y_mean, 'b')
-    plt.fill_between(range(K), y_mean - 2*y_sigma, y_mean + 2*y_sigma, alpha=0.5)
-    plt.plot(test_Y_mu, 'r')
-    plt.show()
-    
-    for i in range(Z):
-        if max_fig is not None and i > max_fig:
-            break
-        
-        plt.figure(figsize=(15, 10))
-        
-        # Plot full data
-        plt.plot(test_X, test_Y[:, i], 'k*')
-        
-        # Plot training data as red circles
-        # find indices of train_X where 2nd column is i
-        idx = np.where(to_numpy(train_X)[:,1] == i)
-        plt.plot(to_numpy(train_X[idx][:,0]), to_numpy(train_Y[idx]), 'ro')
-        
-        #--------------------------------------------------------------
-        # sanity check!!! standardization...
-        xx = to_numpy(train_X[idx][:,0])
-        yy = to_numpy(train_Y[idx])
-        # check that xx,yy are in test_X, test_Y[:, i]
-        for x, y in zip(xx, yy):
-            for xxx,yyy in zip(test_X, test_Y[:, i]):
-                if abs(x-xxx) < 1e-6 and abs(y-yyy) < 1e-6:
-                    break
-            else:
-                print('ERROR: train point not in test data')
-        #--------------------------------------------------------------
-        
-        # Plot predictive means as blue line
-        plt.plot(test_X, y_pred[:, i], 'b')
-        
-        # compute lower,upper with y_var
-        win = 2 * y_sig[:, i]
-        plt.fill_between(test_X, y_pred[:, i] - win, y_pred[:, i] + win, alpha=0.5)
-        
-        # Shade between the lower and upper confidence bounds, different shading color
-        # plt.fill_between(test_X, lower[:, i], upper[:, i], alpha=0.5, color='orange')
-        
-        # set y limits??
-        mean_y = test_Y[:, i].mean()
-        # plt.ylim([mean_y-win, mean_y+win])
-        
-        plt.legend(['Observed Data', 'Mean', 'Confidence'])
-        plt.title(f'Task {i}')
-        # set figsize
-        plt.show()
+        return y_pred, lower, upper, y_mean, y_sigma
 
 #--------------------------------------------------------------------------
 # Fit model
@@ -360,68 +304,57 @@ sampler = BotorchSampler(full_X, sampled_mask,
                          log_interval=log_fit)
 
 sampler.fit(train_X, train_Y)
-y_pred, y_sig, lower, upper, y_mean, y_sigma = sampler.predict()
 
-plot_all(train_X, train_Y, test_X, test_Y, y_pred, y_sig, lower, upper, y_mean, y_sigma, max_fig=3)
+y_pred, lower, upper, y_mean, y_sigma = sampler.predict()
 
 #--------------------------------------------------------------------------
-# Expected Improvement
 
-S_mu = y_pred.sum(axis=-1)
-S_max_idx = np.argmax(S_mu)
-S_max = S_mu[S_max_idx]
+# plot Y_mean, Y_sigma
+plt.figure(figsize=(15, 10))
+plt.plot(y_mean, 'b')
+plt.fill_between(range(K), y_mean - 2*y_sigma, y_mean + 2*y_sigma, alpha=0.5)
+plt.plot(V_mu, 'r')
+plt.show()
 
-unsampled_indices = np.where(~sampled_mask)
-X_unsampled = np.array(unsampled_indices).T
-
-# get list of unsampled tasks, if any
-unsampled_tasks = np.setdiff1d(np.arange(Z), np.unique(np.where(sampled_mask)[1]))
-
-# Get indices as arrays
-i_indices, j_indices = unsampled_indices
-
-# Create mask for unsampled tasks check
-mask = np.ones(len(i_indices), dtype=bool)
-if unsampled_tasks.size > 0:
-    mask = np.isin(j_indices, unsampled_tasks)
+#--------------------------------------------------------------------------
     
-# Initialize EI array with -inf for invalid entries
-EI = np.full(len(i_indices), -math.inf)
-
-# EI computation
-valid_i, valid_j = i_indices[mask], j_indices[mask]
-
-# Vectorized computation of all EI components
-mu = y_pred[valid_i, valid_j]
-sig = y_sig[valid_i, valid_j]
-
-# Get row sums for each valid i
-row_sums = np.sum(y_pred[valid_i, :], axis=1)
-sx = row_sums - mu
-
-# improvement vector, z-scores
-s_max = S_max - sx
-imp = mu - s_max # - beta
-z = imp/sig
-
-if use_logei:
-    # logEI computation (for stability)
-    logh = log_h(torch.tensor(z, dtype=torch.float64)).numpy()
-    ei = np.log(sig) + logh
-    ei_values = np.exp(ei)
-else:
-    # normal EI
-    ei = imp * norm.cdf(z) + sig * norm.pdf(z)
-    ei_values = ei
-
-# Assign computed values to valid positions
-EI[mask] = ei
-EI = np.array(EI)
-
-next_idx = np.argmax(EI)
-next_i, next_j = X_unsampled[next_idx]
-next_checkpoint = checkpoint_nums[next_i]
-max_ei = np.max(ei_values)
-
-print(f'Next checkpoint: {next_checkpoint} with EI: {max_ei:.3f}')
-print()
+win = 0.05
+for i in range(Z):
+    plt.figure(figsize=(15, 10))
+    
+    # Plot full data
+    plt.plot(test_X, test_Y[:, i], 'k*')
+    
+    # Plot training data as red circles
+    # find indices of train_X where 2nd column is i
+    idx = np.where(to_numpy(train_X)[:,1] == i)
+    plt.plot(to_numpy(train_X[idx][:,0]), to_numpy(train_Y[idx]), 'ro')
+    
+    #--------------------------------------------------------------
+    # sanity check!!! standardization...
+    xx = to_numpy(train_X[idx][:,0])
+    yy = to_numpy(train_Y[idx])
+    # check that xx,yy are in test_X, test_Y[:, i]
+    for x, y in zip(xx, yy):
+        for xxx,yyy in zip(test_X, test_Y[:, i]):
+            if abs(x-xxx) < 1e-6 and abs(y-yyy) < 1e-6:
+                break
+        else:
+            print('ERROR: train point not in test data')
+    #--------------------------------------------------------------
+    
+    # Plot predictive means as blue line
+    plt.plot(test_X, y_pred[:, i], 'b')
+    
+    # Shade between the lower and upper confidence bounds
+    plt.fill_between(test_X, lower[:, i], upper[:, i], alpha=0.5)
+    
+    # set y limits??
+    mean_y = test_Y[:, i].mean()
+    # plt.ylim([mean_y-win, mean_y+win])
+    
+    plt.legend(['Observed Data', 'Mean', 'Confidence'])
+    plt.title(f'Task {i}')
+    # set figsize
+    plt.show()
+    
