@@ -23,12 +23,15 @@ fn = 'phi4-math-4claude.txt'
 # Load the Data...
 # We'll assume you have a CSV with columns:
 # "CHECKPOINT", "TEST_AVERAGE", "TEST_1", "TEST_2", ..., "TEST_71".
+# get directory of current file
 current_dir = os.path.dirname(os.path.abspath(__file__))
+# get parent directory
 parent_dir = os.path.dirname(current_dir)
+# data dir = parent_dir + '/data'
 data_dir = os.path.join(parent_dir, 'data')
-
 # load data
 df = pd.read_csv(os.path.join(data_dir, fn), delimiter='\t')
+# df = pd.read_csv('data/phi4-math-4claude.txt', delimiter='\t')
 
 # Extract checkpoint numbers
 checkpoint_nums = df['CHECKPOINT'].apply(lambda x: int(x.split('-')[1])).values   
@@ -289,7 +292,7 @@ def to_numpy(x):
 from crossing import count_line_curve_intersections
 
 # degree metric
-def degree_metric(model, X, verbose=False):
+def degree_metric(model, X):
     model.eval()
     likelihood.eval()
     with torch.no_grad(), gpytorch.settings.fast_pred_var():
@@ -306,13 +309,7 @@ def degree_metric(model, X, verbose=False):
         # plt.plot(x, y)
         # plt.show()
         degrees.append(d)
-    avg_degree = np.mean(degrees)
-    # show histogram
-    if verbose:
-        print(f'Average degree: {avg_degree}')
-        plt.hist(degrees, bins=np.ptp(degrees)+1)
-        plt.show()
-    return avg_degree
+    return np.mean(degrees)
 
 #--------------------------------------------------------------------------
 # Find optimal model hyperparameters
