@@ -24,8 +24,8 @@ fn = 'phi4-math-4claude.txt'
 
 # rand_seed = 333
 
-task_sample = 0.5 # select random subset of tasks
-init_tpc    = 0.1 # number of random tasks per checkpoint (tpc) to initially sample
+task_sample = 1 # select random subset of tasks
+init_tpc = 0.05 # number of random tasks per checkpoint (tpc) to initially sample
              # -> if fraction, tpc++ tpc until that fraction of tasks are sampled
 max_sample = 0.25 # stop BO sampling after this fraction of points are sampled
 
@@ -198,17 +198,108 @@ test_X = np.array(checkpoints)
 test_Y = np.array(V)
 
 #--------------------------------------------------------------------------
+#--------------------------------------------------------------------------
+#--------------------------------------------------------------------------
+#--------------------------------------------------------------------------
+# OR real data
 
-model = MultiTaskGP(train_X, train_Y, task_feature=-1)#, rank=RANK)
+# standardize V
+v_means = V.mean(axis=0) # column-wise mean
+v_sigmas = V.std(axis=0) # column-wise std
+# v_sigmas = v_sigmas.mean()
+# v_sigmas = V.std()
+
+# V = (V - v_means) / v_sigmas # standardize V by column
+
+# normalize V
+# V = (V - V.mean()) / V.std() # globally standardize V
+# V = (V - V.mean(axis=0)) / V.std(axis=0) # standardize V by column
+# V = (V - V.min()) / (V.max() - V.min()) # [0-1]
+# V = 2*(V - V.min()) / (V.max() - V.min()) -1 # [-1,1]
+
+SUBTASK = 1    # select random subset of tasks
+SAMPLE  = 0.05 # select random subset of data points
+
+if SUBTASK <= 1:
+    SUBTASK = int(SUBTASK * Z)
+
+# np.random.seed(0)
+idx = np.random.choice(range(Z), SUBTASK, replace=False)
+V = V[:, idx]
+
+train_x = torch.tensor(checkpoint_nums, dtype=torch.float64)
+train_y = torch.tensor(V, dtype=torch.float64)
+#--------------------------------------------------------------------------
+
+# normalize train_x
+train_x = (train_x - train_x.min()) / (train_x.max() - train_x.min()) # min/max
+# train_x = 2*train_x-1
+# train_x = (train_x - train_x.mean()) / train_x.std() # standardize
+train_x = train_x * 1 # mult by scaling factor
+
+
+RANK = 0.5
+numtasks = train_y.size(-1)
+if RANK<1:
+    RANK = min(int(numtasks*RANK)+1, numtasks)
+    
+
+# deep copy train_x and train_y
+full_x = train_x.clone()
+full_y = train_y.clone()
+
+MODEL_TYPE = 3
+#--------------------------------------------------------------------------
+# if MODEL_TYPE == 1:
+#     # KroneckerMultitaskGPModel
+#     likelihood = gpytorch.likelihoods.MultitaskGaussianLikelihood(num_tasks=numtasks)
+#     # model = KroneckerMultitaskGPModel(train_x, train_y, likelihood, numtasks, rank=RANK)
+#     full_x = train_x.clone()
+# #--------------------------------------------------------------------------
+# else:
+
+# HadamardMultitaskGPModel
+indices = np.where(np.ones_like(V))
+X = np.array([ [train_x[i], j] for i, j in  zip(*indices) ])
+train_x = torch.tensor(X[:,0], dtype=torch.float64)
+train_t = torch.tensor(X[:,1], dtype=torch.long).reshape(-1,1)
+train_y = torch.tensor(train_y[indices], dtype=torch.float64)
+full_x = train_x.clone()
+
+# if MODEL_TYPE == 2:
+#     likelihood = gpytorch.likelihoods.GaussianLikelihood()
+#     # model = HadamardMultitaskGPModel((train_x, train_t), train_y, likelihood, numtasks, rank=RANK, ard_num_dims=V.shape[0])
+
+# else: # BoTorch version !!!
+
+train_x = torch.tensor(X, dtype=torch.float64)
+train_y = train_y.unsqueeze(-1)
+full_x = train_x.clone()
+
+# random subsample
+n = int(SAMPLE * len(train_x))
+idx = np.random.choice(range(len(train_x)), n, replace=False)
+train_x = train_x[idx]
+train_y = train_y[idx]
+
+model = MultiTaskGP(train_x, train_y, task_feature=-1, rank=RANK)
 likelihood = model.likelihood
+
+
+#--------------------------------------------------------------------------
 
 CUDA = True
 if CUDA and torch.cuda.is_available():
     model = model.cuda()
     likelihood = likelihood.cuda()
     
-    train_X, train_Y = train_X.cuda(), train_Y.cuda()
-    full_X = full_X.cuda()
+    train_x, train_y = train_x.cuda(), train_y.cuda()
+    full_x, full_y = full_x.cuda(), full_y.cuda()
+    
+    
+    
+    # if MODEL_TYPE == 2:
+    #     train_t = train_t.cuda()
 
 #--------------------------------------------------------------------------
 # function to search all attributes of a parameter recursively until finding an attribute name
@@ -239,12 +330,12 @@ def degree_metric(model, X, verbose=False):
     likelihood.eval()
     with torch.no_grad(), gpytorch.settings.fast_pred_var():
         pred = likelihood(model(X))
-    mean = pred.mean.reshape(-1, Z)
+    mean = pred.mean.reshape(-1, numtasks)
     model.train()
     likelihood.train()
     
     degrees = []
-    for i in range(Z):
+    for i in range(numtasks):
         y = to_numpy(mean[:, i])
         x = to_numpy(X[X[:,1]==i][:,0])
         d = count_line_curve_intersections(x, y)
@@ -282,13 +373,13 @@ training_iterations = 1000
 
 for i in range(training_iterations):
     optimizer.zero_grad()
-    output = model(train_X)
-    loss = -mll(output, model.train_targets) #train_Y)
+    output = model(train_x, train_t) if MODEL_TYPE==2 else model(train_x)
+    loss = -mll(output, model.train_targets) #train_y)
     loss.backward()
     
     if i % check_interval == 0:
 
-        degree = degree_metric(model, full_X)
+        degree = degree_metric(model, full_x)
         degree_history.append(degree)
         
         # Only check for early stopping after collecting enough data points
@@ -319,31 +410,31 @@ likelihood.eval()
 
 # make predictions
 with torch.no_grad(), gpytorch.settings.fast_pred_var():
-    predictions = likelihood(model(full_X))
+    predictions = likelihood(model(train_x, train_t)) if MODEL_TYPE==2 else likelihood(model(full_x))
     mean = predictions.mean
     lower, upper = predictions.confidence_region()
     
-
-mean = mean.reshape(-1, Z)
-lower = lower.reshape(-1, Z)
-upper = upper.reshape(-1, Z) 
+# if model_type == 2, reshape mean, lower, upper
+if MODEL_TYPE >= 2:
+    mean = mean.reshape(-1, numtasks)
+    lower = lower.reshape(-1, numtasks)
+    upper = upper.reshape(-1, numtasks) 
     
 win = 0.05
-for i in range(Z):
+for i in range(numtasks):
     plt.figure(figsize=(15, 10))
     
     # Plot full data
+    # plt.plot(to_numpy(full_x), to_numpy(full_y[:, i]), 'k*')
     plt.plot(test_X, test_Y[:, i], 'k*')
     
     # Plot training data as red circles
-    # find indices of train_X where 2nd column is i
-    idx = np.where(to_numpy(train_X)[:,1] == i)
-    plt.plot(to_numpy(train_X[idx][:,0]), to_numpy(train_Y[idx]), 'ro')
+    # find indices of train_x where 2nd column is i
+    idx = np.where(to_numpy(train_x)[:,1] == i)
+    plt.plot(to_numpy(train_x[idx][:,0]), to_numpy(train_y[idx]), 'ro')
     
-    #--------------------------------------------------------------
-    # sanity check!!! standardization...
-    xx = to_numpy(train_X[idx][:,0])
-    yy = to_numpy(train_Y[idx])
+    xx = to_numpy(train_x[idx][:,0])
+    yy = to_numpy(train_y[idx])
     # check that xx,yy are in test_X, test_Y[:, i]
     for x, y in zip(xx, yy):
         for xxx,yyy in zip(test_X, test_Y[:, i]):
@@ -351,7 +442,6 @@ for i in range(Z):
                 break
         else:
             print('ERROR: train point not in test data')
-    #--------------------------------------------------------------
     
     # Plot predictive means as blue line
     plt.plot(test_X, to_numpy(mean[:, i]), 'b')
