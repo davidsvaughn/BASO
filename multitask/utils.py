@@ -3,8 +3,157 @@ import numpy as np
 import gc
 import torch
 import math
+import gpytorch
+from crossing import count_line_curve_intersections
+import matplotlib.pyplot as plt
 
 torch.set_default_dtype(torch.float64)
+
+#--------------------------------------------------------------------------
+
+# function to convert tensor to numpy, first to cpu if needed
+def to_numpy(x):
+    x = x.cpu() if x.is_cuda else x
+    return x.numpy()
+
+#--------------------------------------------------------------------------
+
+# degree metric
+def degree_metric(model, X, z=None, verbose=False):
+    if z is None:
+        z = int(X[:,1].max().item() + 1)
+    model.eval()
+    model.likelihood.eval()
+    with torch.no_grad(), gpytorch.settings.fast_pred_var():
+        pred = model.likelihood(model(X))
+    mean = pred.mean.reshape(-1, z)
+    model.train()
+    model.likelihood.train()
+    
+    degrees = []
+    for i in range(z):
+        y = to_numpy(mean[:, i])
+        x = to_numpy(X[X[:,1]==i][:,0])
+        d = count_line_curve_intersections(x, y)
+        # plt.plot(x, y)
+        # plt.show()
+        degrees.append(d)
+    avg_degree = np.mean(degrees)
+    # show histogram
+    if verbose:
+        print(f'Average degree: {avg_degree}')
+        plt.hist(degrees, bins=np.ptp(degrees)+1)
+        plt.show()
+    return avg_degree
+
+#--------------------------------------------------------------------------
+
+def bayesian_std(y, Y, weight=None):
+    """
+    Calculate a stabilized standard deviation for small samples
+    using a larger population as prior.
+    
+    Parameters:
+    y (array-like): Small sample array
+    Y (array-like): Larger population array
+    weight (float): Weight for the prior (None = automatic weighting based on sample size)
+    
+    Returns:
+    float: Stabilized standard deviation
+    """
+    n = len(y)
+    N = len(Y)
+    
+    # Calculate standard deviations
+    std_y = np.std(y, ddof=1) if n > 1 else 0
+    std_Y = np.std(Y, ddof=1)
+    
+    # Automatic weighting based on sample size
+    if weight is None:
+        # As n increases, weight of prior decreases
+        weight = 1 / (1 + n/5)  # Adjust the divisor to control how quickly prior influence fades
+    
+    # Weighted average of the two standard deviations
+    return weight * std_Y + (1 - weight) * std_y
+
+def empirical_bayes_std(y, Y):
+    """
+    Calculate standard deviation using an empirical Bayes approach.
+    
+    Parameters:
+    y (array-like): Small sample array
+    Y (array-like): Larger population array
+    
+    Returns:
+    float: Stabilized standard deviation
+    """
+    n = len(y)
+    
+    if n <= 1:
+        return np.std(Y, ddof=1)
+    
+    # Calculate variance components
+    var_y = np.var(y, ddof=1)
+    var_Y = np.var(Y, ddof=1)
+    
+    # Shrinkage factor (James-Stein type estimator)
+    alpha = 1 - (n-3)/n * var_Y/var_y if var_y > 0 else 0
+    alpha = max(0, min(1, alpha))  # Constrain to [0,1]
+    
+    # Shrink sample variance toward population variance
+    stabilized_var = alpha * var_Y + (1 - alpha) * var_y
+    
+    return np.sqrt(stabilized_var)
+
+#--------------------------------------------------------------------------
+
+def task_standardize(Y, X):
+    # deep copy Y
+    Y = Y.clone()
+    t = X[:,1].long()
+    means, stds, ys = [], [], []
+    Z = t.max() + 1
+    for i in range(Z):
+        y = Y[t==i].squeeze()
+        mu = y.mean()
+        means.append(mu)
+        ys.append(y-mu)
+    means = np.array(means)
+    #-----------------------------------
+    yy = torch.cat(ys).numpy()
+    # sigma = np.std(yy)
+    # stds = np.array([sigma for _ in range(Z)])
+    stds = np.array([bayesian_std(y.numpy(), yy) for y in ys])
+    # stds = np.array([empirical_bayes_std(y.numpy(), yy) for y in ys])
+    #-----------------------------------
+    # perform standardization
+    for i in range(Z):
+        Y[t==i] = (Y[t==i] - means[i]) / stds[i]
+    return Y, (means, stds)
+
+def inv_task_standardize(Y, X, means, stds):
+    Y = Y.clone()
+    t = X[:,1].long()
+    for i in range(len(means)):
+        Y[t==i] = (Y[t==i] * stds[i]) + means[i]
+    return Y
+
+
+#--------------------------------------------------------------------------
+# function to search all attributes of a parameter recursively until finding an attribute name
+def search_attr(obj, attr, default=0):
+    if hasattr(obj, attr) and getattr(obj, attr) is not None:
+        val = getattr(obj, attr)
+        try:
+            return val.item()
+        except:
+            return val
+    else:
+        for subobj in obj.children():
+            res = search_attr(subobj, attr)
+            if res is not None:
+                return res
+    return default
 
 #--------------------------------------------------------------------------
 
@@ -148,3 +297,4 @@ def logEI(mu, sigma, best):
     z = (mu - best) / sigma
     return log_h(z) + torch.log(sigma)
 
+#--------------------------------------------------------------------------

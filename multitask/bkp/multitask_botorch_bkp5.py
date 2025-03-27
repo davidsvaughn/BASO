@@ -10,11 +10,12 @@ import gpytorch
 
 from botorch.models import MultiTaskGP
 
-from utils import clear_cuda_tensors
+from utils import bayesian_std, empirical_bayes_std
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 torch.set_default_dtype(torch.float64)
 rand_seed = -1
+rank_frac = -1
 
 #--------------------------------------------------------------------------
 # SET PARAMETERS
@@ -22,16 +23,17 @@ rand_seed = -1
 fn = 'phi4-math-4claude.txt'
 # fn = 'phi4-bw-4claude.txt'
 
-# rand_seed = 333
+rand_seed = 333
 
-task_sample = 0.5 # select random subset of tasks
-init_tpc    = 0.1 # number of random tasks per checkpoint (tpc) to initially sample
+task_sample = 1 # select random subset of tasks
+init_tpc    = 0.02 # number of random tasks per checkpoint (tpc) to initially sample
              # -> if fraction, tpc++ tpc until that fraction of tasks are sampled
 max_sample = 0.25 # stop BO sampling after this fraction of points are sampled
 
 # MLE estimation
 max_iterations = 1000
 learning_rate = 0.1
+rank_frac = 0.33
 
 # logging intervals
 log_loop = 5
@@ -77,8 +79,8 @@ del test_cols
 K,Z = V.shape
 
 # sample subset of tasks (possibly)
-if task_sample>0:
-    if task_sample <= 1:
+if task_sample>0 and task_sample!=1:
+    if task_sample < 1:
         task_sample = int(task_sample * Z)
     idx = np.random.choice(range(Z), task_sample, replace=False)
     V = V[:, idx]
@@ -101,7 +103,7 @@ def init_samples(K, Z, init_tpc):
         k = random.choice(checkpoints)
         try:
             # select random task not already selected for this checkpoint
-            t = random.choice([t for t in tasks if t not in chk_tasks[k]])
+            t = random.choice([tt for tt in tasks if tt not in chk_tasks[k]])
         except:
             continue # no task satisfies above condition... retry
         chk_tasks[k].append(t)
@@ -132,14 +134,6 @@ full_indices = np.where(np.ones_like(V))
 # min/max normalize checkpoints to unit interval (cube)
 checkpoints = (checkpoint_nums - checkpoint_nums.min()) / (checkpoint_nums.max() - checkpoint_nums.min())
 
-# N = len(full_indices[0]) # total number of (x,z) checkpoint-task pairs (N = K*Z)
-# X = np.array([ [checkpoints[i], j] for i, j in  zip(*full_indices) ])
-# Y = V[full_indices]
-
-# Full test data grid (all-checkpoints X all-tasks)
-# full_test_X = torch.tensor(X[:,0], dtype=torch.float64).to(device)
-# full_test_T = torch.tensor(X[:,1], dtype=torch.long).reshape(-1,1).to(device)
-
 # get mean at each checkpoint
 V_mu = V.mean(axis=1)
 
@@ -148,12 +142,8 @@ best_idx = np.argmax(V_mu)
 best_checkpoint = checkpoint_nums[best_idx]
 print(f'TRUE BEST CHECKPOINT: {best_checkpoint}')
 
-# sampled_indices = init_samples(K, Z, init_tpc)
+# subsample data
 x_idx, t_idx = init_samples(K, Z, init_tpc)
-print()
-
-# train_X = torch.tensor(checkpoints[x_idx], dtype=torch.float64)
-# train_T = torch.tensor(t_idx, dtype=torch.long).reshape(-1,1)
 
 train_X = torch.tensor([ [checkpoints[i], j] for i, j in  zip(x_idx, t_idx) ], dtype=torch.float64)
 train_Y = torch.tensor(V[x_idx, t_idx], dtype=torch.float64).unsqueeze(-1)
@@ -161,22 +151,31 @@ train_Y = torch.tensor(V[x_idx, t_idx], dtype=torch.float64).unsqueeze(-1)
 for i, j in zip(x_idx, t_idx):
     sampled_mask[i, j] = True
 
+#--------------------------------------------------------------------------
 # standardize V?  Y?
-def task_mu_sigma(train_Y, t_idx):
+def task_mu_sigma(train_Y, train_X):
+    t_idx = train_X[:,1].long()
     task_means, task_stds, ys = [], [], []
     Z = t_idx.max() + 1
     for i in range(Z):
         y = train_Y[t_idx==i].squeeze()
         mu = y.mean()
         task_means.append(mu)
-        ys.extend(y-mu)
-    sigma = np.std(ys)
-    task_stds = np.array([sigma for _ in range(Z)])
+        ys.append(y-mu)
     task_means = np.array(task_means)
+    #-----------------------------------
+    Y = torch.cat(ys).numpy()
+    # sigma = np.std(Y)
+    # task_stds = np.array([sigma for _ in range(Z)])
+    task_stds = np.array([bayesian_std(y.numpy(), Y) for y in ys])
+    # task_stds = np.array([empirical_bayes_std(y.numpy(), Y) for y in ys])
+    #-----------------------------------
     return task_means, task_stds
-task_means, task_stds = task_mu_sigma(train_Y, t_idx)
+#---------------------------------------
 
-# get mu,sig from V instead
+task_means, task_stds = task_mu_sigma(train_Y, train_X)
+
+# get FULL DATASET stats from V instead --> CHEATING!!!!!!
 # task_means, task_stds = V.mean(axis=0), V.std(axis=0)
 
 # standardize train_Y
@@ -186,11 +185,13 @@ for i in range(Z):
 # standardize V
 V = (V - task_means) / task_stds
 
-# reset train_Y from V (sanity check!!)
+# reset train_Y from V (sanity check!!!)
 _train_Y = torch.tensor(V[x_idx, t_idx], dtype=torch.float64).unsqueeze(-1)
 assert torch.allclose(train_Y, _train_Y)
 
-# build full data tensors
+#--------------------------------------------------------------------------
+
+# build data tensors
 full_X = torch.tensor([ [checkpoints[i], j] for i, j in  zip(*full_indices) ], dtype=torch.float64)
 
 test_X = np.array(checkpoints)
@@ -198,7 +199,9 @@ test_Y = np.array(V)
 
 #--------------------------------------------------------------------------
 
-model = MultiTaskGP(train_X, train_Y, task_feature=-1)#, rank=RANK)
+rank = int(rank_frac * Z) if rank_frac > 0 else None # Z
+
+model = MultiTaskGP(train_X, train_Y, task_feature=-1, rank=rank)
 likelihood = model.likelihood
 
 CUDA = True
