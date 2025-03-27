@@ -5,11 +5,15 @@ import pandas as pd
 import random
 from scipy.stats import norm
 from matplotlib import pyplot as plt
-import gc
 import torch
 import gpytorch
 
+import botorch
+from botorch.models import MultiTaskGP
+
 from utils import clear_cuda_tensors
+
+torch.set_default_dtype(torch.float64)
 
 #--------------------------------------------------------------------
 
@@ -53,7 +57,7 @@ Z = len(test_cols) # number of tasks/validation sets
 
 sampled_mask = np.zeros_like(V, dtype=bool)
 
-full_test_X = torch.tensor(X[:,0], dtype=torch.float32)
+full_test_X = torch.tensor(X[:,0], dtype=torch.float64)
 full_test_T = torch.tensor(X[:,1], dtype=torch.long).reshape(-1,1)
 
 #--------------------------------------------------------------------------
@@ -91,9 +95,9 @@ Y_sample = Y[sample_indices]
 
 # mark sampled data
 sampled_mask[indices[0][sample_indices], indices[1][sample_indices]] = True
-train_X = torch.tensor(X_sample[:,0], dtype=torch.float32)
+train_X = torch.tensor(X_sample[:,0], dtype=torch.float64)
 train_T = torch.tensor(X_sample[:,1], dtype=torch.long).reshape(-1,1)
-train_Y = torch.tensor(Y_sample, dtype=torch.float32)
+train_Y = torch.tensor(Y_sample, dtype=torch.float64)
 
 #--------------------------------------------------------------------------
 
@@ -172,56 +176,86 @@ train_y = torch.stack([
 #--------------------------------------------------------------------------
 # OR real data
 
+# standardize V
+v_means = V.mean(axis=0) # column-wise mean
+v_sigmas = V.std(axis=0) # column-wise std
+# v_sigmas = v_sigmas.mean()
+# v_sigmas = V.std()
+
+V = (V - v_means) / v_sigmas # standardize V by column
+
 # normalize V
 # V = (V - V.mean()) / V.std() # globally standardize V
-V = (V - V.mean(axis=0)) / V.std(axis=0) # standardize V by column
+# V = (V - V.mean(axis=0)) / V.std(axis=0) # standardize V by column
 # V = (V - V.min()) / (V.max() - V.min()) # [0-1]
 # V = 2*(V - V.min()) / (V.max() - V.min()) -1 # [-1,1]
 
+SUBTASK = 1    # select random subset of tasks
+SAMPLE  = 0.05 # select random subset of data points
 
-SUB = 40    # select random subset of tasks
-RANK = 0.9
+if SUBTASK <= 1:
+    SUBTASK = int(SUBTASK * Z)
 
-np.random.seed(0)
-idx = np.random.choice(range(Z), SUB, replace=False)
+# np.random.seed(0)
+idx = np.random.choice(range(Z), SUBTASK, replace=False)
 V = V[:, idx]
 
-train_x = torch.tensor(checkpoint_nums, dtype=torch.float32)
-train_y = torch.tensor(V, dtype=torch.float32)
+train_x = torch.tensor(checkpoint_nums, dtype=torch.float64)
+train_y = torch.tensor(V, dtype=torch.float64)
 #--------------------------------------------------------------------------
 
 # normalize train_x
-# train_x = (train_x - train_x.min()) / (train_x.max() - train_x.min()) # min/max
+train_x = (train_x - train_x.min()) / (train_x.max() - train_x.min()) # min/max
 # train_x = 2*train_x-1
-train_x = (train_x - train_x.mean()) / train_x.std() # standardize
+# train_x = (train_x - train_x.mean()) / train_x.std() # standardize
 train_x = train_x * 1 # mult by scaling factor
 
+
+RANK = 0.5
 numtasks = train_y.size(-1)
 if RANK<1:
-    RANK = int(numtasks*RANK)+1
+    RANK = min(int(numtasks*RANK)+1, numtasks)
     
 
 # deep copy train_x and train_y
 full_x = train_x.clone()
 full_y = train_y.clone()
 
-MODEL_TYPE = 2
+MODEL_TYPE = 3
 #--------------------------------------------------------------------------
 if MODEL_TYPE == 1:
     # KroneckerMultitaskGPModel
     likelihood = gpytorch.likelihoods.MultitaskGaussianLikelihood(num_tasks=numtasks)
     model = KroneckerMultitaskGPModel(train_x, train_y, likelihood, numtasks, rank=RANK)
+    sample_x = train_x.clone()
 #--------------------------------------------------------------------------
 else:
     # HadamardMultitaskGPModel
     indices = np.where(np.ones_like(V))
     X = np.array([ [train_x[i], j] for i, j in  zip(*indices) ])
-    train_x = torch.tensor(X[:,0], dtype=torch.float32)
+    train_x = torch.tensor(X[:,0], dtype=torch.float64)
     train_t = torch.tensor(X[:,1], dtype=torch.long).reshape(-1,1)
-    train_y = torch.tensor(train_y[indices], dtype=torch.float32)
+    train_y = torch.tensor(train_y[indices], dtype=torch.float64)
+    sample_x = train_x.clone()
     
-    likelihood = gpytorch.likelihoods.GaussianLikelihood()
-    model = HadamardMultitaskGPModel((train_x, train_t), train_y, likelihood, numtasks, rank=RANK, ard_num_dims=V.shape[0])
+    if MODEL_TYPE == 2:
+        likelihood = gpytorch.likelihoods.GaussianLikelihood()
+        model = HadamardMultitaskGPModel((train_x, train_t), train_y, likelihood, numtasks, rank=RANK, ard_num_dims=V.shape[0])
+    
+    else: # BoTorch version??
+        train_x = torch.tensor(X, dtype=torch.float64)
+        train_y = train_y.unsqueeze(-1)
+        sample_x = train_x.clone()
+        
+        # random subsample
+        n = int(SAMPLE * len(train_x))
+        idx = np.random.choice(range(len(train_x)), n, replace=False)
+        train_x = train_x[idx]
+        train_y = train_y[idx]
+
+        model = MultiTaskGP(train_x, train_y, task_feature=-1)#, rank=RANK)
+        likelihood = model.likelihood
+        
 #--------------------------------------------------------------------------
 
 CUDA = True
@@ -230,6 +264,7 @@ if CUDA and torch.cuda.is_available():
     likelihood = likelihood.cuda()
     train_x, train_y = train_x.cuda(), train_y.cuda()
     full_x, full_y = full_x.cuda(), full_y.cuda()
+    sample_x = sample_x.cuda()
     if MODEL_TYPE == 2:
         train_t = train_t.cuda()
 
@@ -247,38 +282,88 @@ def search_attr(obj, attr, default=0):
             res = search_attr(subobj, attr)
             if res is not None:
                 return res
-    return default 
+    return default
 
+# function to convert tensor to numpy, first to cpu if needed
+def to_numpy(x):
+    x = x.cpu() if x.is_cuda else x
+    return x.numpy() 
+
+from crossing import count_line_curve_intersections
+
+# degree metric
+def degree_metric(model, X):
+    model.eval()
+    likelihood.eval()
+    with torch.no_grad(), gpytorch.settings.fast_pred_var():
+        pred = likelihood(model(X))
+    mean = pred.mean.reshape(-1, numtasks)
+    model.train()
+    likelihood.train()
+    
+    degrees = []
+    for i in range(numtasks):
+        y = to_numpy(mean[:, i])
+        x = to_numpy(X[X[:,1]==i][:,0])
+        d = count_line_curve_intersections(x, y)
+        # plt.plot(x, y)
+        # plt.show()
+        degrees.append(d)
+    return np.mean(degrees)
+
+#--------------------------------------------------------------------------
 # Find optimal model hyperparameters
 model.train()
 likelihood.train()
 
 # "Loss" for GPs - the marginal log likelihood
-mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
+mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood=likelihood, model=model)
 
 # Use the adam optimizer
 optimizer = torch.optim.Adam(model.parameters(), lr=0.1)  # Includes GaussianLikelihood parameters
 
-training_iterations = 500
+
+degree_history = []
+window_size = 3  # Size of moving average window
+rise_patience = 3  # Number of consecutive rises to trigger stopping
+consecutive_rises = 0
+check_interval = 5  # Check degree every n iterations
+min_iterations = 50  # Minimum iterations before allowing early stopping
+
+training_iterations = 1000
 
 for i in range(training_iterations):
     optimizer.zero_grad()
-    output = model(train_x) if MODEL_TYPE==1 else model(train_x, train_t)
-    loss = -mll(output, train_y)
+    output = model(train_x, train_t) if MODEL_TYPE==2 else model(train_x)
+    loss = -mll(output, model.train_targets) #train_y)
     loss.backward()
-    if i % 100 == 0:
-        # try to get lengthscale and outputscale
-        lenscale = search_attr(model.covar_module, 'lengthscale')
-        outscale = search_attr(model.covar_module, 'outputscale')
-        # lenscale = model.covar_module.data_covar_module.lengthscale.item()
-        # lenscale = model.covar_module.base_kernel.data_covar_module.lengthscale.item()
-        # lenscale = model.covar_module.data_covar_module.base_kernel.lengthscale.item()
-        # lenscale = model.covar_module.lengthscale.item()
-        # lenscale = model.covar_module.base_kernel.lengthscale.item()
+    
+    if i % check_interval == 0:
+
+        degree = degree_metric(model, sample_x)
+        degree_history.append(degree)
+        
+        # Only check for early stopping after collecting enough data points
+        if len(degree_history) >= window_size + 1 and i >= min_iterations:
+            # Calculate current and previous moving averages
+            current_avg = sum(degree_history[-window_size:]) / window_size
+            prev_avg = sum(degree_history[-(window_size+1):-1]) / window_size
             
-        # print('Iter %d/%d - Loss: %.3f, lengthscale: %.3f' % (i + 1, training_iterations, loss.item(), lenscale))
-        print(f'Iter {i+1}/{training_iterations} - Loss: {loss.item():.3f}, lengthscale: {lenscale:.3f}, outputscale: {outscale:.3f}')
+            # Check if the moving average is rising
+            if current_avg > prev_avg * 1.005:  # Small threshold to avoid stopping due to tiny fluctuations
+                consecutive_rises += 1
+                if consecutive_rises >= rise_patience:
+                    print(f'Early stopping at iteration {i+1}: degree metric rising for {consecutive_rises} consecutive checks')
+                    break
+            else:
+                consecutive_rises = 0
+        
+        if i % (check_interval*5) == 0:
+            print(f'Iter {i}/{training_iterations} - Loss: {loss.item():.3f}, avg_degree: {degree:.3f}')
+
     optimizer.step()
+    
+#--------------------------------------------------------------------------
 
 # Set into eval mode
 model.eval()
@@ -286,27 +371,27 @@ likelihood.eval()
 
 # make predictions
 with torch.no_grad(), gpytorch.settings.fast_pred_var():
-    predictions = likelihood(model(train_x)) if MODEL_TYPE==1 else likelihood(model(train_x, train_t))
+    predictions = likelihood(model(train_x, train_t)) if MODEL_TYPE==2 else likelihood(model(sample_x))
     mean = predictions.mean
     lower, upper = predictions.confidence_region()
     
 # if model_type == 2, reshape mean, lower, upper
-if MODEL_TYPE == 2:
+if MODEL_TYPE >= 2:
     mean = mean.reshape(-1, numtasks)
     lower = lower.reshape(-1, numtasks)
-    upper = upper.reshape(-1, numtasks)
-
-# function to convert tensor to numpy, first to cpu if needed
-def to_numpy(x):
-    x = x.cpu() if x.is_cuda else x
-    return x.numpy()  
+    upper = upper.reshape(-1, numtasks) 
     
 win = 0.05
 for i in range(numtasks):
     plt.figure(figsize=(15, 10))
     
-    # Plot training data
+    # Plot full data
     plt.plot(to_numpy(full_x), to_numpy(full_y[:, i]), 'k*')
+    
+    # Plot training data as red circles
+    # find indices of train_x where 2nd column is i
+    idx = np.where(to_numpy(train_x)[:,1] == i)
+    plt.plot(to_numpy(train_x[idx][:,0]), to_numpy(train_y[idx]), 'ro')
     
     # Plot predictive means as blue line
     plt.plot(to_numpy(full_x), to_numpy(mean[:, i]), 'b')
