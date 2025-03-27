@@ -253,7 +253,7 @@ else:
         train_x = train_x[idx]
         train_y = train_y[idx]
 
-        model = MultiTaskGP(train_x, train_y, task_feature=-1)#, rank=RANK)
+        model = MultiTaskGP(train_x, train_y, task_feature=-1, rank=RANK)
         likelihood = model.likelihood
         
 #--------------------------------------------------------------------------
