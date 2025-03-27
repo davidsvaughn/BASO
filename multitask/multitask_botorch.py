@@ -24,10 +24,10 @@ rank_frac = -1
 fn = 'phi4-math-4claude.txt'
 # fn = 'phi4-bw-4claude.txt'
 
-# rand_seed = 777
+# rand_seed = 545
 
 task_sample = 1 # select random subset of tasks
-init_tpc    = 0.05 # number of random tasks per checkpoint (tpc) to initially sample
+init_tpc    = 0.025 # number of random tasks per checkpoint (tpc) to initially sample
              # -> if fraction, tpc++ tpc until that fraction of tasks are sampled
 max_sample = 0.25 # stop BO sampling after this fraction of points are sampled
 
@@ -149,16 +149,11 @@ for i, j in zip(x_idx, t_idx):
 
 #--------------------------------------------------------------------------
 # standardize V, train_Y
-
 # get FULL DATASET stats from V instead --> CHEATING!!!!!!
 # task_means, task_stds = V.mean(axis=0), V.std(axis=0)
-
 # train_Y, (t_mu, t_sig) = task_standardize(train_Y, train_X)
-    
 # standardize V
 # V = (V - t_mu) / t_sig
-# v_mu = V.mean(axis=1)
-
 #--------------------------------------------------------------------------
 
 # build useful tensors and arrays
@@ -182,7 +177,6 @@ class BotorchSampler:
         self.rank_frac = rank_frac
         self.log_interval = log_interval
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        # self.z = int(full_x[:,1].max().item() + 1)
         self.k, self.z = sampled_mask.shape
         self.full_x = full_x.to(self.device)
         
