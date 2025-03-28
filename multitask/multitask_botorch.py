@@ -47,7 +47,7 @@ max_iterations = 1000
 max_attempts = 15
 
 # rank_frac = 0.5 # 0.25
-rank_frac = 0.25
+rank_frac = 0.35
 
 # lkj prior
 eta = 0.25
