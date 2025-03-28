@@ -9,7 +9,12 @@ import torch
 import gpytorch
 import math
 
+# traceback
+import traceback
+
 from botorch.models import MultiTaskGP
+
+from gpytorch.priors import LKJCovariancePrior, GammaPrior, SmoothedBoxPrior
 
 from utils import task_standardize, inv_task_standardize, to_numpy, degree_metric, log_h
 
@@ -34,7 +39,7 @@ max_sample = 0.25 # stop BO sampling after this fraction of points are sampled
 # MLE estimation
 max_iterations = 1000
 learning_rate = 0.1
-rank_frac = 0.4
+rank_frac = 0.5
 
 # logging intervals
 log_loop = 5
@@ -189,7 +194,28 @@ class BotorchSampler:
         
         # compute rank
         rank = int(self.rank_frac * z) if self.rank_frac > 0 else None
-        self.model = MultiTaskGP(train_x, train_y, task_feature=-1, rank=rank).to(self.device)
+        
+        #---------------------------------------------------------------------
+        # task_covar_prior ???
+        
+        # Initialize multitask model
+        # see: https://archive.botorch.org/v/0.9.2/api/_modules/botorch/models/multitask.html
+
+        sd_prior = GammaPrior(1.0, 0.15).to(self.device)
+        # sd_prior._event_shape = torch.Size([z])
+        task_covar_prior = LKJCovariancePrior(n=z, eta=torch.tensor(0.9).to(self.device),
+                                              sd_prior=sd_prior.to(self.device)).to(self.device)
+        
+        # task_covar_prior = LKJCovariancePrior(n=z, eta=torch.tensor(0.5).to(self.device),
+        #                                       sd_prior=SmoothedBoxPrior(math.exp(-6), math.exp(1.25), 0.05))
+        
+        #---------------------------------------------------------------------
+        
+        self.model = MultiTaskGP(train_x, train_y, task_feature=-1, 
+                                 rank=rank,
+                                 task_covar_prior=task_covar_prior.to(self.device),
+                                 ).to(self.device)
+
         train_x, train_y = train_x.to(self.device), train_y.to(self.device)
         
         # Set the model and likelihood to training mode
@@ -214,12 +240,14 @@ class BotorchSampler:
             optimizer.zero_grad()
             output = self.model(train_x)
             
-            try:
-                loss = -mll(output, self.model.train_targets)
-            except Exception as e:
-                print(f'Early stopping at iteration {i+1}: ERROR in loss calculation...')
-                print(f'ERROR:{i}: {e}')
-                break
+            loss = -mll(output, self.model.train_targets)
+            # try:
+            #     loss = -mll(output, self.model.train_targets)
+            # except Exception as e:
+            #     print(f'Early stopping at iteration {i+1}: ERROR in loss calculation...')
+            #     print(f'ERROR:{i}: {e}')
+            #     print(traceback.format_exc())
+            #     break
             
             loss.backward()
             
