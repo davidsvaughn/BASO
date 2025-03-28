@@ -29,7 +29,7 @@ rank_frac = -1
 fn = 'phi4-math-4claude.txt'
 # fn = 'phi4-bw-4claude.txt'
 
-# rand_seed = 985
+rand_seed = 3233
 
 # select random subset of tasks
 task_sample = 1
@@ -349,7 +349,8 @@ class BotorchSampler:
         # current max estimate
         i = np.argmax(y_mean)
         best_checkpoint = self.x_vals[i]
-        print(f'\nCurrent Best\t*** CHECKPOINT-{best_checkpoint} ***')
+        frac_sampled = np.mean(self.sampled_mask)
+        print(f'\nCurrent Best\t*** CHECKPOINT-{best_checkpoint} *** {100*frac_sampled:.2f}% sampled\n')
         
         self.y_pred = y_pred
         self.y_mean = y_mean
