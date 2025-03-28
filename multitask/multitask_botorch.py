@@ -29,7 +29,7 @@ rank_frac = -1
 fn = 'phi4-math-4claude.txt'
 # fn = 'phi4-bw-4claude.txt'
 
-# rand_seed = 545
+rand_seed = 351
 
 task_sample = 1 # select random subset of tasks
 init_tpc    = 0.025 # number of random tasks per checkpoint (tpc) to initially sample
@@ -202,8 +202,8 @@ class BotorchSampler:
         # see: https://archive.botorch.org/v/0.9.2/api/_modules/botorch/models/multitask.html
 
         sd_prior = GammaPrior(1.0, 0.15).to(self.device)
-        # sd_prior._event_shape = torch.Size([z])
-        task_covar_prior = LKJCovariancePrior(n=z, eta=torch.tensor(0.9).to(self.device),
+        sd_prior._event_shape = torch.Size([z])
+        task_covar_prior = LKJCovariancePrior(n=z, eta=torch.tensor(0.99).to(self.device),
                                               sd_prior=sd_prior.to(self.device)).to(self.device)
         
         # task_covar_prior = LKJCovariancePrior(n=z, eta=torch.tensor(0.5).to(self.device),
