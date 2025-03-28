@@ -27,4 +27,11 @@ pip install numpy pandas matplotlib scipy torch gpytorch botorvh
 
 
 pip install spyder
+pip install --upgrade spyder
 # pip install spyder-kernels==3.0.*
+
+
+----------------------------------------------------------------
+
+mkdir post
+ls fig_*.png 2>/dev/null | grep -E "fig_[0-9]+\.png" | while read file; do num=$(echo "$file" | sed -E 's/fig_([0-9]+)\.png/\1/'); if [ $((num % 3)) -eq 0 ]; then cp "$file" post; fi; done

@@ -9,7 +9,7 @@ __pycache__/
 # dsv
 *.png
 *.npy
-
+runs/
 
 # Distribution / packaging
 .Python

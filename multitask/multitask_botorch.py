@@ -8,15 +8,13 @@ from matplotlib import pyplot as plt
 import torch
 import gpytorch
 import math
-
-# traceback
+from glob import glob
 import traceback
 
 from botorch.models import MultiTaskGP
+from gpytorch.priors import LKJCovariancePrior, SmoothedBoxPrior
 
-from gpytorch.priors import LKJCovariancePrior, GammaPrior, SmoothedBoxPrior
-
-from utils import task_standardize, inv_task_standardize, to_numpy, degree_metric, log_h
+from utils import task_standardize, inv_task_standardize, to_numpy, degree_metric, log_h, clear_cuda_tensors
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 torch.set_default_dtype(torch.float64)
@@ -29,7 +27,7 @@ rank_frac = -1
 fn = 'phi4-math-4claude.txt'
 # fn = 'phi4-bw-4claude.txt'
 
-rand_seed = 3233
+# rand_seed = 2951
 
 # select random subset of tasks
 task_sample = 1
@@ -37,15 +35,18 @@ task_sample = 1
 # number of random tasks per checkpoint (tpc) to initially sample
 # -> if fraction, tpc++ tpc until that fraction of tasks are sampled
 init_tpc    = 2
-# init_tpc    = 0.05
+# init_tpc    = 0.015
 
 # stop BO sampling after this fraction of points are sampled
-max_sample = 0.25
+max_sample = 0.1
 
 # MLE estimation
-max_iterations = 1000
 learning_rate = 0.1
-rank_frac = 0.5 # 0.25
+max_iterations = 1000
+max_attempts = 15
+
+# rank_frac = 0.5 # 0.25
+rank_frac = 0.25
 
 # lkj prior
 eta = 0.25
@@ -82,8 +83,10 @@ run_dir = os.path.join(parent_dir, 'runs')
 
 # create a new run directory
 run_id = f'run_{rand_seed}'
-run_dir = os.path.join(run_dir, run_id)
-os.makedirs(run_dir, exist_ok=True)
+n = len(glob(os.path.join(run_dir, f'{run_id}*')))
+run_dir = os.path.join(run_dir, f'{run_id}_{n}' if n>0 else run_id)
+while os.path.exists(run_dir): run_dir += 'a'
+os.makedirs(run_dir, exist_ok=False)
 
 # load data
 df = pd.read_csv(os.path.join(data_dir, fn), delimiter='\t')
@@ -197,6 +200,7 @@ class BotorchSampler:
                  rank_frac=0.5,
                  eta=0.25,
                  log_interval=50,
+                 max_fit_attempts=10,
                  run_dir=None):   
         self.sampled_mask = sampled_mask
         
@@ -221,14 +225,33 @@ class BotorchSampler:
         self.run_dir = run_dir
         if run_dir is not None:
             plt.ioff()
-            os.makedirs(run_dir, exist_ok=True)
-        # self.y_pred = None
+        self.max_fit_attempts = max_fit_attempts
+        self.round = 0
+        self.reset()
         
-    def fit(self, train_x=None, train_y=None):
-        if train_x is None:
-            train_x = self.train_X
-        if train_y is None:
-            train_y = self.train_Y
+    def reset(self):
+        self.num_fit_attempts = -1
+    
+    @property
+    def sample_fraction(self):
+        return np.mean(self.sampled_mask)
+    
+    # repeated attempts to fit model
+    def fit(self):
+        clear_cuda_tensors()
+        for i in range(self.max_fit_attempts):
+            if self._fit():
+                return True
+            else:
+                if i+1 < self.max_fit_attempts:
+                    print(f'\nFAILED... ATTEMPT {i+2}')
+        raise Exception('ERROR: Failed to fit model - max_fit_attempts reached')
+    
+    # fit model inner loop
+    def _fit(self):
+        self.num_fit_attempts += 1
+        train_x = self.train_X
+        train_y = self.train_Y
         k,z = self.k, self.z
         
         # standardize train_y
@@ -237,19 +260,26 @@ class BotorchSampler:
         
         # compute rank
         rank = int(self.rank_frac * z) if self.rank_frac > 0 else None
+        eta = self.eta
         
         #---------------------------------------------------------------------
-        # define task_covar_prior
+        # if fit is failing...
+        if self.num_fit_attempts > 0:
+            # rank adjustment...
+            if self.rank_frac > 0:
+                w = self.num_fit_attempts * (z-rank)//self.max_fit_attempts
+                rank = min(z, rank + w)
+                print(f'RANK ADJUSTED TO: {rank}')
+            # eta adjustment... ??
+            # eta = eta * (0.95 ** self.num_fit_attempts)
+                
+        #---------------------------------------------------------------------
+        # define task_covar_prior (IMPORTANT!!! nothing works without this...)
+        # see: https://archive.botorch.org/v/0.9.2/api/_modules/botorch/models/multitask.html
         
         task_covar_prior = LKJCovariancePrior(n=z, 
-                                              eta=torch.tensor(self.eta).to(self.device),
+                                              eta=torch.tensor(eta).to(self.device),
                                               sd_prior=SmoothedBoxPrior(math.exp(-6), math.exp(1.25), 0.05))
-        
-        # see: https://archive.botorch.org/v/0.9.2/api/_modules/botorch/models/multitask.html
-        # sd_prior = GammaPrior(1.0, 1).to(self.device) # GammaPrior(1.0, 0.15)
-        # sd_prior._event_shape = torch.Size([z])
-        # task_covar_prior = LKJCovariancePrior(n=z, eta=torch.tensor(self.eta).to(self.device),
-        #                                       sd_prior=sd_prior.to(self.device)).to(self.device)
         #---------------------------------------------------------------------
         # Initialize multitask model
         
@@ -281,29 +311,25 @@ class BotorchSampler:
         for i in range(self.max_iterations):
             optimizer.zero_grad()
             output = self.model(train_x)
-            
-            loss = -mll(output, self.model.train_targets)
-            # try:
-            #     loss = -mll(output, self.model.train_targets)
-            # except Exception as e:
-            #     print(f'Early stopping at iteration {i+1}: ERROR in loss calculation...')
-            #     print(f'ERROR:{i}: {e}')
-            #     print(traceback.format_exc())
-            #     break
+
+            try:
+                loss = -mll(output, self.model.train_targets)
+            except Exception as e:
+                print(f'ERROR in loss calculation at iteration {i}:\n{e}')
+                if self.num_fit_attempts+1 == self.max_fit_attempts:
+                    print(traceback.format_exc())
+                return False
             
             loss.backward()
             
             if i % degree_check_interval == 0:
-
                 degree = degree_metric(self.model, self.full_x)
                 degree_history.append(degree)
-                
                 # Only check for early stopping after collecting enough data points
                 if len(degree_history) >= window_size + 1 and i >= min_iterations:
                     # Calculate current and previous moving averages
                     current_avg = sum(degree_history[-window_size:]) / window_size
                     prev_avg = sum(degree_history[-(window_size+1):-1]) / window_size
-                    
                     # Check if the moving average is rising
                     if current_avg > prev_avg * 1.005:  # Small threshold to avoid stopping due to tiny fluctuations
                         consecutive_rises += 1
@@ -312,11 +338,15 @@ class BotorchSampler:
                             break
                     else:
                         consecutive_rises = 0
-                
             if i % self.log_interval == 0:
                 print(f'Iter {i}/{self.max_iterations} - Loss: {loss.item():.3f}, avg_degree: {degree:.3f}')
-
+                
             optimizer.step()
+            
+        #---- end train loop --------------------------------------------------
+        self.reset() # self.num_fit_attempts = 0
+        return True
+    #--------------------------------------------------------------------------
             
     def predict(self, x=None):
         k,z = self.k, self.z
@@ -349,8 +379,8 @@ class BotorchSampler:
         # current max estimate
         i = np.argmax(y_mean)
         best_checkpoint = self.x_vals[i]
-        frac_sampled = np.mean(self.sampled_mask)
-        print(f'\nCurrent Best\t*** CHECKPOINT-{best_checkpoint} *** {100*frac_sampled:.2f}% sampled')
+        print(f'\nCurrent Best\t*** CHECKPOINT-{best_checkpoint} *** {100*self.sample_fraction:.2f}% sampled')
+        print(f'ROUND:{self.round}\t{best_checkpoint}\t{self.sample_fraction:.4f}')
         
         self.y_pred = y_pred
         self.y_mean = y_mean
@@ -482,6 +512,7 @@ class BotorchSampler:
     
     # use EI to choose next sample
     def sample_next(self):
+        self.round += 1
         unsampled_indices = np.where(~self.sampled_mask)
         x_unsampled = np.array(unsampled_indices).T
         
@@ -511,11 +542,12 @@ class BotorchSampler:
 sampler = BotorchSampler(full_X, sampled_mask,
                          train_X=train_X, train_Y=train_Y, 
                          test_X=checkpoint_nums, test_Y=test_Y,
-                         lr=learning_rate, 
-                         max_iterations=max_iterations, 
+                         lr=learning_rate,
+                         eta=eta,
+                         max_iterations=max_iterations,
+                         max_fit_attempts=max_attempts,
                          max_sample=max_sample, 
                          rank_frac=rank_frac,
-                         eta=eta,
                          log_interval=log_fit,
                          run_dir=run_dir)
 
@@ -525,17 +557,11 @@ sampler.fit()
 sampler.predict()
 # sampler.plot_all(max_fig=10)
 
-#--------------------------------------------------------------------------
-
-iter = 0
-while True:
-    _,next_task = sampler.sample_next()
+while sampler.sample_fraction < max_sample:
+    _, next_task = sampler.sample_next()
     sampler.fit()
     sampler.predict()
     sampler.plot_task(next_task)
     sampler.plot_posterior_mean()
-    iter += 1
-    if iter > 500:
-        break
 
 #--------------------------------------------------------------------------

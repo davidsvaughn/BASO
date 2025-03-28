@@ -111,27 +111,37 @@ def empirical_bayes_std(y, Y):
 #--------------------------------------------------------------------------
 
 def task_standardize(Y, X):
-    # deep copy Y
     Y = Y.clone()
+    ymu = Y.mean()
     t = X[:,1].long()
     means, stds, ys = [], [], []
     Z = t.max() + 1
     for i in range(Z):
-        y = Y[t==i].squeeze()
+        y = Y[t==i][:,0]
         mu = y.mean()
+        #-----------------------------------
+        # center y around the mean
+        yc = y - mu
+        # if std of yc is too small, center with global mean
+        # if not yc.std() > 1e-6:
+        #     Yf = Y.flatten()
+        #     # bootstrap sample from the full dataset
+        #     ymu = Yf[np.random.randint(0, len(Yf), size=len(Yf))].mean()
+        #     yc = y - ymu
+        #     mu = ymu
+        ys.append(yc)
         means.append(mu)
-        ys.append(y-mu)
+        #-----------------------------------
     means = np.array(means)
     #-----------------------------------
     yy = torch.cat(ys).numpy()
-    # sigma = np.std(yy)
-    # stds = np.array([sigma for _ in range(Z)])
     stds = np.array([bayesian_std(y.numpy(), yy) for y in ys])
     # stds = np.array([empirical_bayes_std(y.numpy(), yy) for y in ys])
     #-----------------------------------
-    # perform standardization
+    # actually perform the standardization
     for i in range(Z):
         Y[t==i] = (Y[t==i] - means[i]) / stds[i]
+    # return the standardized Y, and the means and stds for later inverse transform
     return Y, (means, stds)
 
 def inv_task_standardize(Y, X, means, stds):
