@@ -29,18 +29,12 @@ rank_frac = -1
 fn = 'phi4-math-4claude.txt'
 # fn = 'phi4-bw-4claude.txt'
 
-# rand_seed = 985
+rand_seed = 985
 
-# select random subset of tasks
-task_sample = 1
-
-# number of random tasks per checkpoint (tpc) to initially sample
-# -> if fraction, tpc++ tpc until that fraction of tasks are sampled
-init_tpc    = 2
-# init_tpc    = 0.05
-
-# stop BO sampling after this fraction of points are sampled
-max_sample = 0.25
+task_sample = 1 # select random subset of tasks
+init_tpc    = 0.02 # number of random tasks per checkpoint (tpc) to initially sample
+             # -> if fraction, tpc++ tpc until that fraction of tasks are sampled
+max_sample = 0.25 # stop BO sampling after this fraction of points are sampled
 
 # MLE estimation
 max_iterations = 1000
@@ -51,8 +45,8 @@ rank_frac = 0.5 # 0.25
 eta = 0.25
 
 # logging intervals
-log_fit = 50
 log_loop = 5
+log_fit = 50
 
 use_logei = True
 
@@ -62,7 +56,7 @@ use_logei = True
 
 #-------------------------------------------------------------------------
 # random seed
-rand_seed = np.random.randint(1000, 10000) if rand_seed <= 0 else rand_seed
+rand_seed = np.random.randint(100, 1000) if rand_seed <= 0 else rand_seed
 print(f'Random seed: {rand_seed}')
 np.random.seed(rand_seed)
 random.seed(rand_seed)
@@ -78,12 +72,6 @@ local = os.path.exists('/home/david')
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 data_dir = os.path.join(parent_dir, 'data')
-run_dir = os.path.join(parent_dir, 'runs')
-
-# create a new run directory
-run_id = f'run_{rand_seed}'
-run_dir = os.path.join(run_dir, run_id)
-os.makedirs(run_dir, exist_ok=True)
 
 # load data
 df = pd.read_csv(os.path.join(data_dir, fn), delimiter='\t')
@@ -109,13 +97,9 @@ if task_sample>0 and task_sample!=1:
 
 def init_samples(K, Z, init_tpc):
     if init_tpc >= 1:
-        m = init_tpc * Z # max(K,Z)
+        m = init_tpc * max(K,Z)
     else:
-        # m = int(max(init_tpc * K * Z , max(K,Z)))
-        m = int(max(init_tpc * K * Z , Z )) # max(K,Z)))
-        
-    print('\n' + '-'*100)
-    print(f'Initializing with {m} samples, {m/(K*Z):.4f} of full dataset\n')
+        m = int(max(init_tpc * K * Z , max(K,Z)))
     
     tasks = list(range(Z))
     checkpoints = list(range(K))
@@ -196,17 +180,13 @@ class BotorchSampler:
                  max_sample=0.25, 
                  rank_frac=0.5,
                  eta=0.25,
-                 log_interval=50,
-                 run_dir=None):   
+                 log_interval=50):   
         self.sampled_mask = sampled_mask
         
         self.train_X = train_X
         self.train_Y = train_Y
         self.x_vals = test_X # original checkpoint numbers
-        
-        self.x_width = test_X.max() - test_X.min()
-        self.x_min = test_X.min()
-        self.test_X = (test_X - self.x_min ) / self.x_width # min/max normalized
+        self.test_X = (test_X - test_X.min()) / (test_X.max() - test_X.min()) # min/max normalized
         self.test_Y = test_Y # == V
         
         self.lr = lr
@@ -218,11 +198,7 @@ class BotorchSampler:
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.k, self.z = sampled_mask.shape
         self.full_x = full_x.to(self.device)
-        self.run_dir = run_dir
-        if run_dir is not None:
-            plt.ioff()
-            os.makedirs(run_dir, exist_ok=True)
-        # self.y_pred = None
+        self.y_pred = None
         
     def fit(self, train_x=None, train_y=None):
         if train_x is None:
@@ -275,7 +251,7 @@ class BotorchSampler:
         rise_patience = 3  # Number of consecutive rises to trigger stopping
         consecutive_rises = 0
         degree_check_interval = 5  # Check degree every n iterations
-        min_iterations = 100  # Minimum iterations before allowing early stopping
+        min_iterations = 50  # Minimum iterations before allowing early stopping
         
         # train loop
         for i in range(self.max_iterations):
@@ -346,87 +322,95 @@ class BotorchSampler:
         y_covar = y_covar * self.t_sig**2
         y_sigma = np.array([np.sqrt(y_covar[i,:,i].sum()) for i in range(k)]) / z
         
-        # current max estimate
-        i = np.argmax(y_mean)
-        best_checkpoint = self.x_vals[i]
-        print(f'\nCurrent Best\t*** CHECKPOINT-{best_checkpoint} ***')
-        
+        # lower, upper = predictions.confidence_region()
+        # lower = to_numpy(lower.reshape(k, z))
+        # upper = to_numpy(upper.reshape(k, z))
+        # lower = lower * self.t_sig + self.t_mu
+        # upper = upper * self.t_sig + self.t_mu
         self.y_pred = y_pred
         self.y_mean = y_mean
         self.y_sig = y_sig
         self.y_sigma = y_sigma
         return y_pred, y_sig, y_mean, y_sigma
     
-    #-------------------------------------------------------------------------
-    # Plotting functions
-    
-    def display(self, fig=None, fn=None):
-        if self.run_dir is not None:
-            j = len([f for f in os.listdir(self.run_dir) if f.endswith('.png')])
-            if fn is None:
-                fn = os.path.join(self.run_dir, f'fig_{j+1}.png')
-            if fig is None:
-                plt.savefig(fn)
-                plt.close()
-            else:
-                fig.savefig(fn)
-                del fig
-        else:
-            plt.show()
-    
+    def plot_task(self, j):
+        # train_X = self.train_X
+        # train_Y = self.train_Y
+        # test_X = self.test_X
+        # test_Y = self.test_Y
+        # y_pred = self.y_pred
+        # y_sig = self.y_sig
+        plt.figure(figsize=(15, 10))
+        
+        # Plot all data as black stars
+        plt.plot(self.test_X, self.test_Y[:, j], 'k*')
+        
+        # Plot training (observed) data as red circles
+        idx = np.where(to_numpy(self.train_X)[:,1] == j)
+        plt.plot(to_numpy(self.train_X[idx][:,0]), to_numpy(self.train_Y[idx]), 'ro')
+        
+        # Plot predictive means as blue line
+        plt.plot(self.test_X, self.y_pred[:, j], 'b')
+        
+        # cconfidences
+        win = 2 * self.y_sig[:, j]
+        plt.fill_between(self.test_X, self.y_pred[:, j] - win, self.y_pred[:, j] + win, alpha=0.5)
+        
+        plt.legend(['Unobserved', 'Observed', 'Posterior Mean', 'Confidence'])
+        plt.title(f'Task {j}')
+        plt.show()
+        
     def plot_posterior_mean(self):
         K,Z = self.test_Y.shape
         test_Y_mu = self.test_Y.mean(axis=1)
         plt.figure(figsize=(15, 10))
-        plt.plot(self.x_vals, self.y_mean, 'b')
-        plt.fill_between(self.x_vals, self.y_mean - 2*self.y_sigma, self.y_mean + 2*self.y_sigma, alpha=0.5)
-        plt.plot(self.x_vals, test_Y_mu, 'r')
-        self.display()
-        
-    def plot_task(self, j):
-        plt.figure(figsize=(15, 10))
-        
-        # x_grid = self.test_X
-        x_grid = self.x_vals
-        
-        # Plot all data as black stars
-        plt.plot(x_grid, self.test_Y[:, j], 'k*')
-        
-        # Plot training (observed) data as red circles
-        idx = np.where(to_numpy(self.train_X)[:,1] == j)
-        # plt.plot(to_numpy(self.train_X[idx][:,0]), to_numpy(self.train_Y[idx]), 'ro')
-        xx = to_numpy(self.train_X[idx][:,0])
-        
-        # inverse normalize x
-        xx = xx * self.x_width + self.x_min
-        
-        yy = to_numpy(self.train_Y[idx])
-        plt.plot(xx, yy, 'ro')
-        
-        
-        # Plot predictive means as blue line
-        plt.plot(x_grid, self.y_pred[:, j], 'b')
-        
-        # confidences
-        win = 2 * self.y_sig[:, j]
-        plt.fill_between(x_grid, self.y_pred[:, j] - win, self.y_pred[:, j] + win, alpha=0.5)
-        
-        plt.legend(['Unobserved', 'Observed', 'Posterior Mean', 'Confidence'])
-        plt.title(f'Task {j}')
-
-        # save figure
-        self.display()
-        # self.display(plt.gcf())
+        plt.plot(self.y_mean, 'b')
+        plt.fill_between(range(K), self.y_mean - 2*self.y_sigma, self.y_mean + 2*self.y_sigma, alpha=0.5)
+        plt.plot(test_Y_mu, 'r')
+        plt.show()
     
+    # Plotting function
     def plot_all(self, max_fig=None):
-        Z = test_Y.shape[-1]
-        self.plot_posterior_mean()
+        train_X = self.train_X
+        train_Y = self.train_Y
+        test_X = self.test_X
+        test_Y = self.test_Y
+        y_pred = self.y_pred
+        y_sig = self.y_sig
+        y_mean = self.y_mean
+        y_sigma = self.y_sigma
+        
+        K,Z = test_Y.shape
+        test_Y_mu = test_Y.mean(axis=1)
+        
+        plt.figure(figsize=(15, 10))
+        plt.plot(y_mean, 'b')
+        plt.fill_between(range(K), y_mean - 2*y_sigma, y_mean + 2*y_sigma, alpha=0.5)
+        plt.plot(test_Y_mu, 'r')
+        plt.show()
+        
         for j in range(Z):
             if max_fig is not None and j > max_fig:
                 break
-            self.plot_task(j)
+            plt.figure(figsize=(15, 10))
             
-    #-------------------------------------------------------------------------
+            # Plot all data as black stars
+            plt.plot(test_X, test_Y[:, j], 'k*')
+            
+            # Plot training (observed) data as red circles
+            idx = np.where(to_numpy(train_X)[:,1] == j)
+            plt.plot(to_numpy(train_X[idx][:,0]), to_numpy(train_Y[idx]), 'ro')
+            
+            # Plot predictive means as blue line
+            plt.plot(test_X, y_pred[:, j], 'b')
+            
+            # cconfidences
+            win = 2 * y_sig[:, j]
+            plt.fill_between(test_X, y_pred[:, j] - win, y_pred[:, j] + win, alpha=0.5)
+            
+            plt.legend(['Unobserved', 'Observed', 'Posterior Mean', 'Confidence'])
+            plt.title(f'Task {j}')
+            plt.show()
     
     # compute expected improvement
     def expected_improvement(self):
@@ -484,24 +468,18 @@ class BotorchSampler:
         unsampled_indices = np.where(~self.sampled_mask)
         x_unsampled = np.array(unsampled_indices).T
         
-        # next sample has highest EI
         exp_imp, max_ei = self.expected_improvement()
         next_idx = np.argmax(exp_imp)
         next_i, next_j = x_unsampled[next_idx]
         next_checkpoint = self.x_vals[next_i]
+        print(f'Next Sample: checkpoint-{next_checkpoint}, task-{next_j}, (EI={max_ei:.3f})')
         
-        print('-'*60)
-        print(f'Next Sample\t*** CHECKPOINT-{next_checkpoint}, TASK-{next_j} *** (ei={max_ei:.3g})\n')
-        
-        # plot task (before sampling)
         self.plot_task(next_j)
         
-        # add new sample to training set (observe) and update mask 
         self.sampled_mask[next_i, next_j] = True
         self.train_X = torch.cat([self.train_X, torch.tensor([ [self.test_X[next_i], next_j] ], dtype=torch.float64)])
         self.train_Y = torch.cat([self.train_Y, torch.tensor([self.test_Y[next_i, next_j]], dtype=torch.float64).unsqueeze(-1)])
         
-        # return next sample
         return next_i, next_j
 
 #--------------------------------------------------------------------------
@@ -515,26 +493,21 @@ sampler = BotorchSampler(full_X, sampled_mask,
                          max_sample=max_sample, 
                          rank_frac=rank_frac,
                          eta=eta,
-                         log_interval=log_fit,
-                         run_dir=run_dir)
+                         log_interval=log_fit)
 
 #--------------------------------------------------------------------------
 
 sampler.fit()
 sampler.predict()
-# sampler.plot_all(max_fig=10)
+sampler.plot_all(max_fig=10)
 
 #--------------------------------------------------------------------------
 
-iter = 0
 while True:
     _,next_task = sampler.sample_next()
     sampler.fit()
     sampler.predict()
     sampler.plot_task(next_task)
     sampler.plot_posterior_mean()
-    iter += 1
-    if iter > 500:
-        break
 
 #--------------------------------------------------------------------------

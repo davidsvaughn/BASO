@@ -524,6 +524,7 @@ while True:
         best_checkpoint_sampled += 1
 
     print(f'Next sample - checkpoint:\t{next_checkpoint}, task={next_j}\n')
+    
     sampled_mask[next_i, next_j] = True
     train_X = torch.cat([train_X, torch.tensor([checkpoints[next_i]], dtype=torch.float32)])
     train_T = torch.cat([train_T, torch.tensor([next_j], dtype=torch.long).reshape(-1,1)])
