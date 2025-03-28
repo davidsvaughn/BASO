@@ -20,7 +20,7 @@ from gpytorch.priors import LKJCovariancePrior, SmoothedBoxPrior
 from utils import task_standardize, inv_task_standardize, inspect_matrix
 from utils import to_numpy, degree_metric, log_h, clear_cuda_tensors
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 torch.set_default_dtype(torch.float64)
 rand_seed = -1
 rank_frac = -1
@@ -56,6 +56,7 @@ eta = 0.25
 log_fit = 50
 log_loop = 5
 
+use_cuda = True
 use_logei = True
 
 # select random subset of tasks
@@ -97,18 +98,30 @@ run_dir = os.path.join(run_base, f'{run_id}_{n}' if n>0 else run_id)
 while os.path.exists(run_dir): run_dir += 'a'
 os.makedirs(run_dir, exist_ok=False)
 
+#-----------------------------------------------------------------------
+# setup logging
 # log_file = os.path.join(run_dir, 'log.txt')
-# logging.basicConfig(
-#     level=logging.INFO,
-#     format='%(asctime)s [%(levelname)s] %(message)s',
-#     handlers=[
-#         logging.FileHandler(log_file),
-#         logging.StreamHandler()  # This will print to console too
-#     ]
-# )
-# logging.info(f'Run directory: {run_dir}')
-# logging.info(f'Random seed: {rand_seed}')
+log_file = os.path.join(run_dir, f'run_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log')
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    handlers=[
+        logging.FileHandler(log_file),
+        logging.StreamHandler()  # This will print to console too
+    ]
+)
+logging.info('-'*80)
+logging.info(f'Run directory: {run_dir}')
+logging.info(f'Random seed: {rand_seed}')
 
+'''
+Usage:
+    logging.info('Info message')
+    logging.warning('Warning message')
+    logging.error('Error message')
+    logging.debug('Debug message')  # Only shows if level=logging.DEBUG
+    logging.exception('Exception message')  # Logs the stack trace
+'''
 #--------------------------------------------------------------------------
 # load data
 df = pd.read_csv(os.path.join(data_dir, fn), delimiter='\t')
@@ -133,20 +146,20 @@ if task_sample>0 and task_sample!=1:
 #-------------------------------------------------------------------------
 
 def init_samples(K, Z, init_obs):
-    print('\n' + '-'*100)
     if init_obs >= 1:
         if init_obs < 2:
             init_obs = 2
-            print('FYI: increasing init_obs to 2 (minimum 2 obs/task allowed)')
+            logging.info('FYI: increasing init_obs to 2 (minimum 2 obs/task allowed)')
         m = ceil(init_obs * Z)
     else:
         min_frac = 2/K # == 2*Z/(K*Z)
         if init_obs < min_frac:
             m = 2*Z
-            print(f'FYI: increasing init_obs to {min_frac:.4g} (minimum 2 obs/task allowed)')
+            logging.info(f'FYI: increasing init_obs to {min_frac:.4g} (minimum 2 obs/task allowed)')
         else:
             m = max(2*Z, ceil(init_obs * K * Z))
-    print(f'FYI: initializing sampler with {m} observations ( ~{m/(K*Z):.4g} of all obs, ~{m/Z:.4g} obs/task )\n')
+    logging.info(f'FYI: initializing sampler with {m} observations ( ~{m/(K*Z):.4g} of all obs, ~{m/Z:.4g} obs/task )\n')
+    logging.info('-'*80)
     
     tasks = list(range(Z))
     checkpoints = list(range(K))
@@ -191,7 +204,7 @@ checkpoints = (checkpoint_nums - checkpoint_nums.min()) / (checkpoint_nums.max()
 # find best checkpoint
 best_idx = np.argmax(V.mean(axis=1))
 best_checkpoint = checkpoint_nums[best_idx]
-print(f'TRUE BEST CHECKPOINT: {best_checkpoint}')
+logging.info(f'TRUE BEST CHECKPOINT: {best_checkpoint}')
 
 # subsample data
 x_idx, t_idx = init_samples(K, Z, init_obs)
@@ -222,6 +235,7 @@ class BotorchSampler:
                  eta=0.25,
                  log_interval=50,
                  max_fit_attempts=10,
+                 use_cuda=True,
                  run_dir=None):   
         self.sampled_mask = sampled_mask
         
@@ -240,7 +254,12 @@ class BotorchSampler:
         self.rank_frac = rank_frac
         self.eta = eta
         self.log_interval = log_interval
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = torch.device("cuda" if torch.cuda.is_available() and use_cuda else "cpu")
+        if use_cuda:
+            logging.info(f'Using CUDA: {torch.cuda.is_available()}')
+        else:
+            logging.info('Using CPU')
+        logging.info(f'Using device: {self.device}')
         self.k, self.z = sampled_mask.shape
         self.full_x = full_x.to(self.device)
         self.run_dir = run_dir
@@ -257,15 +276,16 @@ class BotorchSampler:
     def sample_fraction(self):
         return np.mean(self.sampled_mask)
     
-    # repeated attempts to fit model
+    # repeatedly attempt to fit model
     def fit(self):
-        clear_cuda_tensors()
+        clear_cuda_tensors(logging)
         for i in range(self.max_fit_attempts):
             if self._fit():
                 return True
             else:
                 if i+1 < self.max_fit_attempts:
-                    print(f'\nFAILED... ATTEMPT {i+2}')
+                    logging.warning('-'*80)
+                    logging.warning(f'FAILED... ATTEMPT {i+2}')
         raise Exception('ERROR: Failed to fit model - max_fit_attempts reached')
     
     # fit model inner loop
@@ -290,7 +310,7 @@ class BotorchSampler:
             if self.rank_frac > 0:
                 w = self.num_fit_attempts * (z-rank)//self.max_fit_attempts
                 rank = min(z, rank + w)
-                print(f'RANK ADJUSTED TO: {rank}')
+                logging.info(f'FYI: rank adjusted to {rank}')
             # eta adjustment... ??
             # eta = eta * (0.95 ** self.num_fit_attempts)
                 
@@ -336,9 +356,10 @@ class BotorchSampler:
             try:
                 loss = -mll(output, self.model.train_targets)
             except Exception as e:
-                print(f'ERROR in loss calculation at iteration {i}:\n{e}')
                 if self.num_fit_attempts+1 == self.max_fit_attempts:
-                    print(traceback.format_exc())
+                    logging.exception("An exception occurred")
+                else:
+                    logging.error(f'error in loss calculation at iteration {i}:\n{e}')
                 return False
             
             loss.backward()
@@ -355,12 +376,12 @@ class BotorchSampler:
                     if current_avg > prev_avg * 1.005:  # Small threshold to avoid stopping due to tiny fluctuations
                         consecutive_rises += 1
                         if consecutive_rises >= rise_patience:
-                            print(f'Early stopping at iteration {i+1}: degree metric rising for {consecutive_rises} consecutive checks')
+                            logging.info(f'FYI: Early stopping at iteration {i+1}: degree metric rising for {consecutive_rises} consecutive checks')
                             break
                     else:
                         consecutive_rises = 0
             if i % self.log_interval == 0:
-                print(f'Iter {i}/{self.max_iterations} - Loss: {loss.item():.3f}, avg_degree: {degree:.3f}')
+                logging.info(f'Iter {i}/{self.max_iterations} - Loss: {loss.item():.3f}, avg_degree: {degree:.3f}')
                 
             optimizer.step()
             
@@ -399,10 +420,11 @@ class BotorchSampler:
         
         # current max estimate
         i = np.argmax(y_mean)
-        best_checkpoint = self.x_vals[i]
+        self.current_best_checkpoint = self.x_vals[i]
         
-        print(f'\nROUND:{self.round+1}\t{best_checkpoint}\t{self.sample_fraction:.4f}')
-        print(f'CURRENT BEST\tCHECKPOINT-{best_checkpoint}\t{100*self.sample_fraction:.2f}% sampled')
+        logging.info('-'*80)
+        logging.info(f'ROUND:{self.round+1}\t{self.current_best_checkpoint}\t{self.sample_fraction:.4f}')
+        logging.info(f'CURRENT BEST\tCHECKPOINT-{self.current_best_checkpoint}\t{100*self.sample_fraction:.2f}% sampled')
         
         self.y_pred = y_pred
         self.y_mean = y_mean
@@ -434,9 +456,12 @@ class BotorchSampler:
         plt.plot(self.x_vals, self.y_mean, 'b')
         plt.fill_between(self.x_vals, self.y_mean - 2*self.y_sigma, self.y_mean + 2*self.y_sigma, alpha=0.5)
         plt.plot(self.x_vals, test_Y_mu, 'r')
+        
+        plt.legend(['Posterior Mean', 'Confidence', 'True Mean'])
+        plt.title(f'Round: {self.round} - Current Best Checkpoint: {self.current_best_checkpoint}')
         self.display()
         
-    def plot_task(self, j):
+    def plot_task(self, j, msg=''):
         plt.figure(figsize=(15, 10))
         
         # x_grid = self.test_X
@@ -465,7 +490,7 @@ class BotorchSampler:
         plt.fill_between(x_grid, self.y_pred[:, j] - win, self.y_pred[:, j] + win, alpha=0.5)
         
         plt.legend(['Unobserved', 'Observed', 'Posterior Mean', 'Confidence'])
-        plt.title(f'Task {j}')
+        plt.title(f'Round: {self.round} - Task: {j} {msg}')
 
         # save figure
         self.display()
@@ -544,11 +569,11 @@ class BotorchSampler:
         next_i, next_j = x_unsampled[next_idx]
         next_checkpoint = self.x_vals[next_i]
         
-        print(f'NEXT SAMPLE\tCHECKPOINT-{next_checkpoint}\tTASK-{next_j}\t(ei={max_ei:.3g})')
-        print('-'*80 + '\n')
+        logging.info(f'NEXT SAMPLE\tCHECKPOINT-{next_checkpoint}\tTASK-{next_j}\t(ei={max_ei:.3g})')
+        logging.info('='*80)
         
         # plot task (before sampling)
-        self.plot_task(next_j)
+        self.plot_task(next_j, '(before)')
         
         # add new sample to training set (observe) and update mask 
         self.sampled_mask[next_i, next_j] = True
@@ -571,6 +596,7 @@ sampler = BotorchSampler(full_X, sampled_mask,
                          max_sample=max_sample, 
                          rank_frac=rank_frac,
                          log_interval=log_fit,
+                         use_cuda=use_cuda,
                          run_dir=run_dir)
 
 #--------------------------------------------------------------------------
@@ -583,7 +609,7 @@ while sampler.sample_fraction < max_sample:
     _, next_task = sampler.sample_next()
     sampler.fit()
     sampler.predict()
-    sampler.plot_task(next_task)
+    sampler.plot_task(next_task, '(after)')
     sampler.plot_posterior_mean()
 
 #--------------------------------------------------------------------------
