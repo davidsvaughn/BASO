@@ -350,7 +350,7 @@ class BotorchSampler:
         i = np.argmax(y_mean)
         best_checkpoint = self.x_vals[i]
         frac_sampled = np.mean(self.sampled_mask)
-        print(f'\nCurrent Best\t*** CHECKPOINT-{best_checkpoint} *** {100*frac_sampled:.2f}% sampled\n')
+        print(f'\nCurrent Best\t*** CHECKPOINT-{best_checkpoint} *** {100*frac_sampled:.2f}% sampled')
         
         self.y_pred = y_pred
         self.y_mean = y_mean
