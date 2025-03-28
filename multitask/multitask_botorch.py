@@ -29,17 +29,20 @@ rank_frac = -1
 fn = 'phi4-math-4claude.txt'
 # fn = 'phi4-bw-4claude.txt'
 
-rand_seed = 351
+# rand_seed = 351
 
 task_sample = 1 # select random subset of tasks
-init_tpc    = 0.025 # number of random tasks per checkpoint (tpc) to initially sample
+init_tpc    = 0.02 # number of random tasks per checkpoint (tpc) to initially sample
              # -> if fraction, tpc++ tpc until that fraction of tasks are sampled
 max_sample = 0.25 # stop BO sampling after this fraction of points are sampled
 
 # MLE estimation
 max_iterations = 1000
 learning_rate = 0.1
-rank_frac = 0.5
+rank_frac = 0.5 # 0.25
+
+# lkj prior
+eta = 0.25
 
 # logging intervals
 log_loop = 5
@@ -174,12 +177,14 @@ class BotorchSampler:
                  max_iterations=1000,
                  max_sample=0.25, 
                  rank_frac=0.5,
+                 eta=0.25,
                  log_interval=50):   
         self.sampled_mask = sampled_mask
         self.lr = lr
         self.max_iterations = max_iterations
         self.max_sample = max_sample
         self.rank_frac = rank_frac
+        self.eta = eta
         self.log_interval = log_interval
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.k, self.z = sampled_mask.shape
@@ -201,13 +206,14 @@ class BotorchSampler:
         # Initialize multitask model
         # see: https://archive.botorch.org/v/0.9.2/api/_modules/botorch/models/multitask.html
 
-        sd_prior = GammaPrior(1.0, 0.15).to(self.device)
-        sd_prior._event_shape = torch.Size([z])
-        task_covar_prior = LKJCovariancePrior(n=z, eta=torch.tensor(0.99).to(self.device),
-                                              sd_prior=sd_prior.to(self.device)).to(self.device)
+        # sd_prior = GammaPrior(1.0, 1).to(self.device) # GammaPrior(1.0, 0.15)
+        # sd_prior._event_shape = torch.Size([z])
+        # task_covar_prior = LKJCovariancePrior(n=z, eta=torch.tensor(self.eta).to(self.device),
+        #                                       sd_prior=sd_prior.to(self.device)).to(self.device)
         
-        # task_covar_prior = LKJCovariancePrior(n=z, eta=torch.tensor(0.5).to(self.device),
-        #                                       sd_prior=SmoothedBoxPrior(math.exp(-6), math.exp(1.25), 0.05))
+        task_covar_prior = LKJCovariancePrior(n=z, 
+                                              eta=torch.tensor(self.eta).to(self.device),
+                                              sd_prior=SmoothedBoxPrior(math.exp(-6), math.exp(1.25), 0.05))
         
         #---------------------------------------------------------------------
         
@@ -379,12 +385,13 @@ sampler = BotorchSampler(full_X, sampled_mask,
                          max_iterations=max_iterations, 
                          max_sample=max_sample, 
                          rank_frac=rank_frac,
+                         eta=eta,
                          log_interval=log_fit)
 
 sampler.fit(train_X, train_Y)
 y_pred, y_sig, lower, upper, y_mean, y_sigma = sampler.predict()
 
-plot_all(train_X, train_Y, test_X, test_Y, y_pred, y_sig, lower, upper, y_mean, y_sigma, max_fig=3)
+plot_all(train_X, train_Y, test_X, test_Y, y_pred, y_sig, lower, upper, y_mean, y_sigma, max_fig=10)
 
 #--------------------------------------------------------------------------
 # Expected Improvement
