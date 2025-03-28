@@ -112,23 +112,13 @@ def empirical_bayes_std(y, Y):
 
 def task_standardize(Y, X):
     Y = Y.clone()
-    ymu = Y.mean()
     t = X[:,1].long()
     means, stds, ys = [], [], []
     Z = t.max() + 1
     for i in range(Z):
         y = Y[t==i][:,0]
         mu = y.mean()
-        #-----------------------------------
-        # center y around the mean
         yc = y - mu
-        # if std of yc is too small, center with global mean
-        # if not yc.std() > 1e-6:
-        #     Yf = Y.flatten()
-        #     # bootstrap sample from the full dataset
-        #     ymu = Yf[np.random.randint(0, len(Yf), size=len(Yf))].mean()
-        #     yc = y - ymu
-        #     mu = ymu
         ys.append(yc)
         means.append(mu)
         #-----------------------------------
@@ -151,6 +141,63 @@ def inv_task_standardize(Y, X, means, stds):
         Y[t==i] = (Y[t==i] * stds[i]) + means[i]
     return Y
 
+#--------------------------------------------------------------------------
+# debugging stuff...
+
+def inspect_matrix(V):
+    print(V.shape)
+    # hist of stds
+    stds = np.std(V, axis=0)
+    plt.hist(stds, bins=10)
+    plt.show()
+    # for each column, plot histogram
+    for i in range(V.shape[1]):
+        plt.hist(V[:,i], bins=10)
+        plt.title(f'Column {i}')
+        plt.xlabel('Value')
+        plt.ylabel('Frequency')
+        plt.show()
+        if i > 10:
+            break
+    sys.exit()
+    
+def task_standardize_old(Y, X):
+    Y = Y.clone()
+    t = X[:,1].long()
+    means, stds, ys = [], [], []
+    Z = t.max() + 1
+    jj = 0
+    for i in range(Z):
+        y = Y[t==i][:,0]
+        mu = y.mean()
+        #-----------------------------------
+        # center y around the mean
+        yc = y - mu
+        # if std of yc is too small, center with global mean
+        if not yc.std() > 1e-6:
+            jj+= 1
+            print(f'HEY! {jj}')
+            Yf = Y.flatten()
+            # bootstrap sample from the full dataset
+            ymu = Yf[np.random.randint(0, len(Yf), size=len(Yf))].mean()
+            yc = y - ymu
+            mu = ymu
+        ys.append(yc)
+        means.append(mu)
+        #-----------------------------------
+    means = np.array(means)
+    #-----------------------------------
+    yy = torch.cat(ys).numpy()
+    stds = np.array([bayesian_std(y.numpy(), yy) for y in ys])
+    # stds = np.array([empirical_bayes_std(y.numpy(), yy) for y in ys])
+    # plt.hist(stds, bins=10)
+    # plt.show()
+    #-----------------------------------
+    # actually perform the standardization
+    for i in range(Z):
+        Y[t==i] = (Y[t==i] - means[i]) / stds[i]
+    # return the standardized Y, and the means and stds for later inverse transform
+    return Y, (means, stds)
 
 #--------------------------------------------------------------------------
 # function to search all attributes of a parameter recursively until finding an attribute name

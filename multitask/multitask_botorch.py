@@ -8,13 +8,15 @@ from matplotlib import pyplot as plt
 import torch
 import gpytorch
 import math
+from math import ceil
 from glob import glob
 import traceback
 
 from botorch.models import MultiTaskGP
 from gpytorch.priors import LKJCovariancePrior, SmoothedBoxPrior
 
-from utils import task_standardize, inv_task_standardize, to_numpy, degree_metric, log_h, clear_cuda_tensors
+from utils import task_standardize, inv_task_standardize, inspect_matrix
+from utils import to_numpy, degree_metric, log_h, clear_cuda_tensors
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 torch.set_default_dtype(torch.float64)
@@ -32,10 +34,10 @@ fn = 'phi4-math-4claude.txt'
 # select random subset of tasks
 task_sample = 1
 
-# number of random tasks per checkpoint (tpc) to initially sample
-# -> if fraction, tpc++ tpc until that fraction of tasks are sampled
-init_tpc    = 2
-# init_tpc    = 0.015
+# number of random obs-per-task (opt) to initially sample
+# if <1, then fraction of total obs
+init_obs    = 2
+# init_obs    = 0.05
 
 # stop BO sampling after this fraction of points are sampled
 max_sample = 0.1
@@ -79,12 +81,12 @@ local = os.path.exists('/home/david')
 current_dir = os.path.dirname(os.path.abspath(__file__))
 parent_dir = os.path.dirname(current_dir)
 data_dir = os.path.join(parent_dir, 'data')
-run_dir = os.path.join(parent_dir, 'runs')
+run_base = os.path.join(parent_dir, 'runs') if local else '/mnt/llm-train/baso/runs'
 
 # create a new run directory
 run_id = f'run_{rand_seed}'
-n = len(glob(os.path.join(run_dir, f'{run_id}*')))
-run_dir = os.path.join(run_dir, f'{run_id}_{n}' if n>0 else run_id)
+n = len(glob(os.path.join(run_base, f'{run_id}*')))
+run_dir = os.path.join(run_base, f'{run_id}_{n}' if n>0 else run_id)
 while os.path.exists(run_dir): run_dir += 'a'
 os.makedirs(run_dir, exist_ok=False)
 
@@ -100,6 +102,8 @@ V = df[test_cols].values
 del test_cols
 K,Z = V.shape
 
+# inspect_matrix(V)
+
 # sample subset of tasks (possibly)
 if task_sample>0 and task_sample!=1:
     if task_sample < 1:
@@ -110,15 +114,21 @@ if task_sample>0 and task_sample!=1:
 
 #-------------------------------------------------------------------------
 
-def init_samples(K, Z, init_tpc):
-    if init_tpc >= 1:
-        m = init_tpc * Z # max(K,Z)
-    else:
-        # m = int(max(init_tpc * K * Z , max(K,Z)))
-        m = int(max(init_tpc * K * Z , Z )) # max(K,Z)))
-        
+def init_samples(K, Z, init_obs):
     print('\n' + '-'*100)
-    print(f'Initializing with {m} samples, {m/(K*Z):.4f} of full dataset\n')
+    if init_obs >= 1:
+        if init_obs < 2:
+            init_obs = 2
+            print('FYI: increasing init_obs to 2 (minimum 2 obs/task allowed)')
+        m = ceil(init_obs * Z)
+    else:
+        min_frac = 2/K # == 2*Z/(K*Z)
+        if init_obs < min_frac:
+            m = 2*Z
+            print(f'FYI: increasing init_obs to {min_frac:.4g} (minimum 2 obs/task allowed)')
+        else:
+            m = max(2*Z, ceil(init_obs * K * Z))
+    print(f'FYI: initializing sampler with {m} observations ( ~{m/(K*Z):.4g} of all obs, ~{m/Z:.4g} obs/task )\n')
     
     tasks = list(range(Z))
     checkpoints = list(range(K))
@@ -166,7 +176,7 @@ best_checkpoint = checkpoint_nums[best_idx]
 print(f'TRUE BEST CHECKPOINT: {best_checkpoint}')
 
 # subsample data
-x_idx, t_idx = init_samples(K, Z, init_tpc)
+x_idx, t_idx = init_samples(K, Z, init_obs)
 
 train_X = torch.tensor([ [checkpoints[i], j] for i, j in  zip(x_idx, t_idx) ], dtype=torch.float64)
 train_Y = torch.tensor(V[x_idx, t_idx], dtype=torch.float64).unsqueeze(-1)
