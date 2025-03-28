@@ -97,17 +97,17 @@ run_dir = os.path.join(run_base, f'{run_id}_{n}' if n>0 else run_id)
 while os.path.exists(run_dir): run_dir += 'a'
 os.makedirs(run_dir, exist_ok=False)
 
-# log_file = os.path.join(run_dir, 'log.txt')
-# logging.basicConfig(
-#     level=logging.INFO,
-#     format='%(asctime)s [%(levelname)s] %(message)s',
-#     handlers=[
-#         logging.FileHandler(log_file),
-#         logging.StreamHandler()  # This will print to console too
-#     ]
-# )
-# logging.info(f'Run directory: {run_dir}')
-# logging.info(f'Random seed: {rand_seed}')
+log_file = os.path.join(run_dir, 'log.txt')
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    handlers=[
+        logging.FileHandler(log_file),
+        logging.StreamHandler()  # This will print to console too
+    ]
+)
+logging.info(f'Run directory: {run_dir}')
+logging.info(f'Random seed: {rand_seed}')
 
 #--------------------------------------------------------------------------
 # load data
@@ -121,6 +121,8 @@ test_cols = [col for col in df.columns if col.startswith('TEST_') and col != 'TE
 V = df[test_cols].values
 del test_cols
 K,Z = V.shape
+
+# inspect_matrix(V)
 
 # sample subset of tasks (possibly)
 if task_sample>0 and task_sample!=1:
@@ -202,6 +204,13 @@ train_Y = torch.tensor(V[x_idx, t_idx], dtype=torch.float64).unsqueeze(-1)
 for i, j in zip(x_idx, t_idx):
     sampled_mask[i, j] = True
 
+#--------------------------------------------------------------------------
+# standardize V, train_Y
+# get FULL DATASET stats from V instead --> CHEATING!!!!!!
+# task_means, task_stds = V.mean(axis=0), V.std(axis=0)
+# train_Y, (t_mu, t_sig) = task_standardize(train_Y, train_X)
+# standardize V
+# V = (V - t_mu) / t_sig
 #--------------------------------------------------------------------------
 
 # build useful tensors and arrays
@@ -400,9 +409,8 @@ class BotorchSampler:
         # current max estimate
         i = np.argmax(y_mean)
         best_checkpoint = self.x_vals[i]
-        
-        print(f'\nROUND:{self.round+1}\t{best_checkpoint}\t{self.sample_fraction:.4f}')
-        print(f'CURRENT BEST\tCHECKPOINT-{best_checkpoint}\t{100*self.sample_fraction:.2f}% sampled')
+        print(f'\nCurrent Best\t*** CHECKPOINT-{best_checkpoint} *** {100*self.sample_fraction:.2f}% sampled')
+        print(f'ROUND:{self.round}\t{best_checkpoint}\t{self.sample_fraction:.4f}')
         
         self.y_pred = y_pred
         self.y_mean = y_mean
@@ -544,8 +552,8 @@ class BotorchSampler:
         next_i, next_j = x_unsampled[next_idx]
         next_checkpoint = self.x_vals[next_i]
         
-        print(f'NEXT SAMPLE\tCHECKPOINT-{next_checkpoint}\tTASK-{next_j}\t(ei={max_ei:.3g})')
-        print('-'*80 + '\n')
+        print('-'*60)
+        print(f'Next Sample\t*** CHECKPOINT-{next_checkpoint}, TASK-{next_j} *** (ei={max_ei:.3g})\n')
         
         # plot task (before sampling)
         self.plot_task(next_j)
