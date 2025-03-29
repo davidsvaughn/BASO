@@ -59,7 +59,11 @@ log_fit = 50
 log_loop = 5
 
 use_cuda = True
+
+# TODO: redefine EI with mean (not sum) ???????????????????????????????????????????
+use_ei = False
 use_logei = True
+ucb_lambda = 1
 
 # select random subset of tasks
 task_sample = 1
@@ -587,37 +591,22 @@ class BotorchSampler:
             mask = np.isin(j_indices, unsampled_tasks)
             
         # Initialize EI array with -inf for invalid entries
-        EI = np.full(len(i_indices), -math.inf)
+        UCB = np.full(len(i_indices), -math.inf)
 
         # Vectorized computation of all EI components
         valid_i, valid_j = i_indices[mask], j_indices[mask]
         mu = self.y_pred[valid_i, valid_j]
         sig = self.y_sig[valid_i, valid_j]
 
-        # Get row sums for each valid i
-        row_sums = np.sum(self.y_pred[valid_i, :], axis=1)
-        sx = row_sums - mu
+        # Get row sums for each valid i (sum[mu] over all tasks for each checkpoint)
+        # row_sums = np.sum(self.y_pred[valid_i, :], axis=1)
+        row_means = np.mean(self.y_pred[valid_i, :], axis=1)
+        
+        ucb = row_means + ucb_lambda * sig
+        UCB[mask] = ucb
+        max_ucb = np.max(ucb)
+        return UCB, max_ucb
 
-        # improvement vector, z-scores
-        s_max = S_max - sx
-        imp = mu - s_max # - beta
-        z = imp/sig
-
-        if use_logei:
-            # logEI computation (for stability)
-            logh = log_h(torch.tensor(z, dtype=torch.float64)).numpy()
-            ei = np.log(sig) + logh
-            ei_values = np.exp(ei)
-        else:
-            # normal EI
-            ei = imp * norm.cdf(z) + sig * norm.pdf(z)
-            ei_values = ei
-
-        # Assign computed values to valid positions
-        EI[mask] = ei
-        EI = np.array(EI)
-        max_ei = np.max(ei_values)
-        return EI, max_ei
     
     # use EI to choose next sample
     def sample_next(self):
@@ -625,12 +614,13 @@ class BotorchSampler:
         unsampled_indices = np.where(~self.sampled_mask)
         x_unsampled = np.array(unsampled_indices).T
         
-        # next sample has highest EI
-        acq_values, max_val = self.expected_improvement()
-        
-        # or use UCB
-        acq_values, max_val = self.ucb()
-        
+        # acquisition function
+        if use_ei:
+            # expected improvement
+            acq_values, max_val = self.expected_improvement()
+        else:
+            # upper confidence bound
+            acq_values, max_val = self.ucb()
         
         next_idx = np.argmax(acq_values)
         next_i, next_j = x_unsampled[next_idx]
