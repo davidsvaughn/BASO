@@ -575,8 +575,8 @@ class BotorchSampler:
     
     def ucb(self):
         S_mu = self.y_pred.sum(axis=-1)
-        S_max_idx = np.argmax(S_mu)
-        S_max = S_mu[S_max_idx]
+        # S_max_idx = np.argmax(S_mu)
+        # S_max = S_mu[S_max_idx]
         
         # get unsampled indices
         unsampled_indices = np.where(~self.sampled_mask)
@@ -599,10 +599,13 @@ class BotorchSampler:
         sig = self.y_sig[valid_i, valid_j]
 
         # Get row sums for each valid i (sum[mu] over all tasks for each checkpoint)
-        # row_sums = np.sum(self.y_pred[valid_i, :], axis=1)
+        row_sums = np.sum(self.y_pred[valid_i, :], axis=1)
         row_means = np.mean(self.y_pred[valid_i, :], axis=1)
         
-        ucb = row_means + ucb_lambda * sig
+        row_vals = row_sums
+        # row_vals = row_means
+        
+        ucb = row_vals + ucb_lambda * sig
         UCB[mask] = ucb
         max_ucb = np.max(ucb)
         return UCB, max_ucb
