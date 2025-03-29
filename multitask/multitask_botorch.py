@@ -12,6 +12,7 @@ from datetime import datetime
 import math
 from math import ceil
 from glob import glob
+import shutil
 import traceback
 
 from botorch.models import MultiTaskGP
@@ -47,10 +48,11 @@ max_iterations = 1000
 max_attempts = 15
 
 # rank_frac = 0.5 # 0.25
-rank_frac = 0.35
+rank_frac = 0.25
 
 # lkj prior
 eta = 0.25
+eta_gamma = 0.9
 
 # logging intervals
 log_fit = 50
@@ -97,6 +99,13 @@ n = len(glob(os.path.join(run_base, f'{run_id}*')))
 run_dir = os.path.join(run_base, f'{run_id}_{n}' if n>0 else run_id)
 while os.path.exists(run_dir): run_dir += 'a'
 os.makedirs(run_dir, exist_ok=False)
+
+# copy current file to run directory (save parameters, etc)
+src = os.path.join(current_dir, os.path.basename(__file__))
+dst = os.path.join(run_dir, os.path.basename(__file__))
+# shutil.copy(src, dst)
+# execute command using os
+os.system(f'cp {src} {dst}')
 
 #-----------------------------------------------------------------------
 # setup logging
@@ -233,6 +242,7 @@ class BotorchSampler:
                  max_sample=0.25, 
                  rank_frac=0.5,
                  eta=0.25,
+                 eta_gamma=0.9,
                  log_interval=50,
                  max_fit_attempts=10,
                  use_cuda=True,
@@ -253,6 +263,7 @@ class BotorchSampler:
         self.max_sample = max_sample
         self.rank_frac = rank_frac
         self.eta = eta
+        self.eta_gamma = eta_gamma
         self.log_interval = log_interval
         self.device = torch.device("cuda" if torch.cuda.is_available() and use_cuda else "cpu")
         if use_cuda:
@@ -312,7 +323,8 @@ class BotorchSampler:
                 rank = min(z, rank + w)
                 logging.info(f'FYI: rank adjusted to {rank}')
             # eta adjustment... ??
-            # eta = eta * (0.95 ** self.num_fit_attempts)
+            eta = eta * (self.eta_gamma ** self.num_fit_attempts)
+            logging.info(f'FYI: eta adjusted to {eta:.4g}')
                 
         #---------------------------------------------------------------------
         # define task_covar_prior (IMPORTANT!!! nothing works without this...)
@@ -343,7 +355,7 @@ class BotorchSampler:
         # degree stopping criterion
         degree_history = []
         window_size = 3  # Size of moving average window
-        rise_patience = 3  # Number of consecutive rises to trigger stopping
+        rise_patience = 5  # Number of consecutive rises to trigger stopping
         consecutive_rises = 0
         degree_check_interval = 5  # Check degree every n iterations
         min_iterations = 100  # Minimum iterations before allowing early stopping
@@ -557,6 +569,56 @@ class BotorchSampler:
         max_ei = np.max(ei_values)
         return EI, max_ei
     
+    def ucb(self):
+        S_mu = self.y_pred.sum(axis=-1)
+        S_max_idx = np.argmax(S_mu)
+        S_max = S_mu[S_max_idx]
+        
+        # get unsampled indices
+        unsampled_indices = np.where(~self.sampled_mask)
+
+        # get list of unsampled tasks, if any
+        unsampled_tasks = np.setdiff1d(np.arange(Z), np.unique(np.where(self.sampled_mask)[1]))
+        i_indices, j_indices = unsampled_indices
+
+        # Create mask for unsampled tasks check
+        mask = np.ones(len(i_indices), dtype=bool)
+        if unsampled_tasks.size > 0:
+            mask = np.isin(j_indices, unsampled_tasks)
+            
+        # Initialize EI array with -inf for invalid entries
+        EI = np.full(len(i_indices), -math.inf)
+
+        # Vectorized computation of all EI components
+        valid_i, valid_j = i_indices[mask], j_indices[mask]
+        mu = self.y_pred[valid_i, valid_j]
+        sig = self.y_sig[valid_i, valid_j]
+
+        # Get row sums for each valid i
+        row_sums = np.sum(self.y_pred[valid_i, :], axis=1)
+        sx = row_sums - mu
+
+        # improvement vector, z-scores
+        s_max = S_max - sx
+        imp = mu - s_max # - beta
+        z = imp/sig
+
+        if use_logei:
+            # logEI computation (for stability)
+            logh = log_h(torch.tensor(z, dtype=torch.float64)).numpy()
+            ei = np.log(sig) + logh
+            ei_values = np.exp(ei)
+        else:
+            # normal EI
+            ei = imp * norm.cdf(z) + sig * norm.pdf(z)
+            ei_values = ei
+
+        # Assign computed values to valid positions
+        EI[mask] = ei
+        EI = np.array(EI)
+        max_ei = np.max(ei_values)
+        return EI, max_ei
+    
     # use EI to choose next sample
     def sample_next(self):
         self.round += 1
@@ -564,12 +626,17 @@ class BotorchSampler:
         x_unsampled = np.array(unsampled_indices).T
         
         # next sample has highest EI
-        exp_imp, max_ei = self.expected_improvement()
-        next_idx = np.argmax(exp_imp)
+        acq_values, max_val = self.expected_improvement()
+        
+        # or use UCB
+        acq_values, max_val = self.ucb()
+        
+        
+        next_idx = np.argmax(acq_values)
         next_i, next_j = x_unsampled[next_idx]
         next_checkpoint = self.x_vals[next_i]
         
-        logging.info(f'NEXT SAMPLE\tCHECKPOINT-{next_checkpoint}\tTASK-{next_j}\t(ei={max_ei:.3g})')
+        logging.info(f'NEXT SAMPLE\tCHECKPOINT-{next_checkpoint}\tTASK-{next_j}\t(acq_fxn_max={max_val:.3g})')
         logging.info('='*80)
         
         # plot task (before sampling)
@@ -591,6 +658,7 @@ sampler = BotorchSampler(full_X, sampled_mask,
                          test_X=checkpoint_nums, test_Y=test_Y,
                          lr=learning_rate,
                          eta=eta,
+                         eta_gamma=eta_gamma,
                          max_iterations=max_iterations,
                          max_fit_attempts=max_attempts,
                          max_sample=max_sample, 
