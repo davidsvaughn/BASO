@@ -49,6 +49,90 @@ def degree_metric(model, X, z=None, verbose=False):
         plt.show()
     return avg_degree
 
+# curvature metric
+def curvature_metric(model, X, z=None, verbose=False):
+    if z is None:
+        z = int(X[:,1].max().item() + 1)
+    model.eval()
+    model.likelihood.eval()
+    with torch.no_grad(), gpytorch.settings.fast_pred_var():
+        pred = model.likelihood(model(X))
+    mean = pred.mean.reshape(-1, z)
+    model.train()
+    model.likelihood.train()
+    
+    deriv, maxes = [],[]
+    for i in range(z):
+        y = to_numpy(mean[:, i])
+        x = to_numpy(X[X[:,1]==i][:,0])
+        d = second_derivative(x, y)
+        # plt.plot(x, y)
+        # plt.show()
+        deriv.extend(np.abs(d))
+        maxes.append(np.max(np.abs(d)))
+    avg_deriv = np.mean(deriv)
+    mean_max = np.mean(maxes)
+    max_max = np.max(maxes)
+    # show histogram
+    if verbose:
+        print(f'Mean: {avg_deriv}, Max: {max_max}, Mean Max: {mean_max}')
+        plt.hist(deriv, bins=15)
+        plt.show()
+        plt.hist(maxes, bins=15)
+        plt.show()
+    return mean_max
+
+
+def second_derivative(x, y):
+    """
+    Estimate the second derivative at each point along a curve.
+    
+    Parameters:
+    X : numpy.ndarray
+        2D array where X[:, 0] contains x-coordinates and X[:, 1] contains y-coordinates.
+        Points should be sorted by x-coordinate.
+    
+    Returns:
+    numpy.ndarray
+        Array of second derivative estimates at each point.
+    """
+    # Extract x and y coordinates
+    # x = X[:, 0]
+    # y = X[:, 1]
+    
+    n = len(x)
+    second_derivatives = np.zeros(n)
+    
+    # For interior points, use central difference formula
+    for i in range(1, n-1):
+        # Calculate step sizes (to handle non-uniform x spacing)
+        h1 = x[i] - x[i-1]
+        h2 = x[i+1] - x[i]
+        
+        # Finite difference approximation of second derivative
+        # Using non-uniform grid formula
+        second_derivatives[i] = (2 * y[i-1] / (h1 * (h1 + h2)) - 
+                               2 * y[i] / (h1 * h2) + 
+                               2 * y[i+1] / (h2 * (h1 + h2)))
+    
+    # For endpoints, use forward and backward differences
+    if n > 2:
+        # Forward difference for first point
+        h1 = x[1] - x[0]
+        h2 = x[2] - x[1]
+        second_derivatives[0] = (2 * y[0] / (h1 * (h1 + h2)) - 
+                               2 * y[1] / (h1 * h2) + 
+                               2 * y[2] / (h2 * (h1 + h2)))
+        
+        # Backward difference for last point
+        h1 = x[n-2] - x[n-3]
+        h2 = x[n-1] - x[n-2]
+        second_derivatives[n-1] = (2 * y[n-3] / (h1 * (h1 + h2)) - 
+                                 2 * y[n-2] / (h1 * h2) + 
+                                 2 * y[n-1] / (h2 * (h1 + h2)))
+    
+    return second_derivatives
+
 #--------------------------------------------------------------------------
 
 def bayesian_std(y, Y, weight=None):

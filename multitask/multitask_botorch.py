@@ -19,7 +19,7 @@ from botorch.models import MultiTaskGP
 from gpytorch.priors import LKJCovariancePrior, SmoothedBoxPrior
 
 from utils import task_standardize, inv_task_standardize, inspect_matrix
-from utils import to_numpy, degree_metric, log_h, clear_cuda_tensors
+from utils import to_numpy, degree_metric, log_h, clear_cuda_tensors, curvature_metric
 
 # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 torch.set_default_dtype(torch.float64)
@@ -40,7 +40,7 @@ init_obs    = 2
 # init_obs    = 0.05
 
 # stop BO sampling after this fraction of points are sampled
-max_sample = 0.1
+max_sample = 0.05
 
 # MLE estimation
 learning_rate = 0.1
@@ -61,9 +61,9 @@ log_loop = 5
 use_cuda = True
 
 # TODO: redefine EI with mean (not sum) ???????????????????????????????????????????
-use_ei = False
-use_logei = True
-ucb_lambda = 1
+use_ei = True
+use_logei = False
+ucb_lambda = 10
 
 # select random subset of tasks
 task_sample = 1
@@ -359,7 +359,7 @@ class BotorchSampler:
         # degree stopping criterion
         degree_history = []
         window_size = 3  # Size of moving average window
-        rise_patience = 5  # Number of consecutive rises to trigger stopping
+        rise_patience = 3  # Number of consecutive rises to trigger stopping
         consecutive_rises = 0
         degree_check_interval = 5  # Check degree every n iterations
         min_iterations = 100  # Minimum iterations before allowing early stopping
@@ -383,6 +383,9 @@ class BotorchSampler:
             if i % degree_check_interval == 0:
                 degree = degree_metric(self.model, self.full_x)
                 degree_history.append(degree)
+                
+                curve = curvature_metric(self.model, self.full_x, verbose=True)
+                
                 # Only check for early stopping after collecting enough data points
                 if len(degree_history) >= window_size + 1 and i >= min_iterations:
                     # Calculate current and previous moving averages
