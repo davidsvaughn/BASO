@@ -62,7 +62,7 @@ use_cuda = True
 
 # TODO: redefine EI with mean (not sum) ???????????????????????????????????????????
 use_ei = True
-use_logei = False
+use_logei = True
 ucb_lambda = 10
 
 # select random subset of tasks
@@ -357,12 +357,12 @@ class BotorchSampler:
         optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
         
         # degree stopping criterion
-        degree_history = []
+        metric_history = []
         window_size = 3  # Size of moving average window
-        rise_patience = 3  # Number of consecutive rises to trigger stopping
         consecutive_rises = 0
-        degree_check_interval = 5  # Check degree every n iterations
-        min_iterations = 100  # Minimum iterations before allowing early stopping
+        metric_check_interval = 5  # Check degree every n iterations
+        min_iterations = 50  # Minimum iterations before allowing early stopping
+        rise_patience = 5  # Number of consecutive rises to trigger stopping
         
         # train loop
         for i in range(self.max_iterations):
@@ -380,27 +380,33 @@ class BotorchSampler:
             
             loss.backward()
             
-            if i % degree_check_interval == 0:
+            if i % metric_check_interval == 0:
                 degree = degree_metric(self.model, self.full_x)
-                degree_history.append(degree)
+                curve = curvature_metric(self.model, self.full_x, verbose=False)
                 
-                curve = curvature_metric(self.model, self.full_x, verbose=True)
+                # metric_history.append(degree)
+                metric_history.append(curve)
+                
+                # print degree and curve (debugging)
+                # logging.info(f'Iter {i}/{self.max_iterations} - Loss: {loss.item():.3f}, avg_degree: {degree:.3f}, curvature: {curve:.3f}')
                 
                 # Only check for early stopping after collecting enough data points
-                if len(degree_history) >= window_size + 1 and i >= min_iterations:
+                if len(metric_history) >= window_size + 1 and i >= min_iterations:
                     # Calculate current and previous moving averages
-                    current_avg = sum(degree_history[-window_size:]) / window_size
-                    prev_avg = sum(degree_history[-(window_size+1):-1]) / window_size
+                    current_avg = sum(metric_history[-window_size:]) / window_size
+                    prev_avg = sum(metric_history[-(window_size+1):-1]) / window_size
                     # Check if the moving average is rising
                     if current_avg > prev_avg * 1.005:  # Small threshold to avoid stopping due to tiny fluctuations
                         consecutive_rises += 1
                         if consecutive_rises >= rise_patience:
-                            logging.info(f'FYI: Early stopping at iteration {i+1}: degree metric rising for {consecutive_rises} consecutive checks')
+                            logging.info(f'FYI: Early stopping at iteration {i+1}: metric rising for {consecutive_rises} consecutive checks')
                             break
                     else:
                         consecutive_rises = 0
             if i % self.log_interval == 0:
-                logging.info(f'Iter {i}/{self.max_iterations} - Loss: {loss.item():.3f}, avg_degree: {degree:.3f}')
+                # logging.info(f'Iter {i}/{self.max_iterations} - Loss: {loss.item():.3f}, avg_degree: {degree:.3f}')
+                # logging.info(f'Iter {i}/{self.max_iterations} - Loss: {loss.item():.3f}, curvature: {curve:.3f}')
+                logging.info(f'Iter {i}/{self.max_iterations} - Loss: {loss.item():.3f}, avg_degree: {degree:.3f}, curvature: {curve:.3f}')
                 
             optimizer.step()
             
