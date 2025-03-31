@@ -19,6 +19,20 @@ def to_numpy(x):
         x = x.cpu()
     return x.numpy()
 
+def display_fig(run_dir, fig=None, fn=None):
+    if run_dir is not None:
+        j = len([f for f in os.listdir(run_dir) if f.endswith('.png')])
+        if fn is None:
+            fn = os.path.join(run_dir, f'fig_{j+1}.png')
+        if fig is None:
+            plt.savefig(fn)
+            plt.close()
+        else:
+            fig.savefig(fn)
+            del fig
+    else:
+        plt.show()
+
 #--------------------------------------------------------------------------
 
 # degree metric

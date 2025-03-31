@@ -18,7 +18,7 @@ import traceback
 from botorch.models import MultiTaskGP
 from gpytorch.priors import LKJCovariancePrior, SmoothedBoxPrior
 
-from utils import task_standardize, inv_task_standardize, inspect_matrix
+from utils import task_standardize, display_fig, inv_task_standardize, inspect_matrix
 from utils import to_numpy, degree_metric, log_h, clear_cuda_tensors, curvature_metric
 
 # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -36,8 +36,8 @@ fn = 'phi4-math-4claude.txt'
 
 # number of random obs-per-task (opt) to initially sample
 # if <1, then fraction of total obs
-# init_obs    = 2
-init_obs    = 0.05
+init_obs    = 2
+# init_obs    = 0.05
 
 # stop BO sampling after this fraction of points are sampled
 max_sample = 0.06
@@ -69,7 +69,7 @@ use_cuda = True
 
 # TODO: redefine EI with mean (not sum) ???????????????????????????????????????????
 use_ei = False
-use_logei = False
+use_logei = True
 ucb_lambda = 3
 ucb_gamma = 0.995
 
@@ -226,7 +226,7 @@ checkpoints = (checkpoint_nums - checkpoint_nums.min()) / (checkpoint_nums.max()
 best_idx = np.argmax(V.mean(axis=1))
 best_checkpoint = checkpoint_nums[best_idx]
 best_y_mean = V.mean(axis=1)[best_idx]
-logging.info(f'TRUE BEST CHECKPOINT: {best_checkpoint}\tY={best_y_mean:.4f}')
+# logging.info(f'TRUE BEST CHECKPOINT:\t{best_checkpoint}\tY={best_y_mean:.4f}')
 
 # subsample data
 x_idx, t_idx = init_samples(K, Z, init_obs)
@@ -248,19 +248,22 @@ test_Y = np.array(V)
 #--------------------------------------------------------------------------
 # Full Data Regression Model
 
-def full_model(train_x, train_y, test_x):
-    k = test_x.shape[0]
-    z = train_y.reshape([k, -1]).shape[-1]
+def full_model(train_x, train_y, k, z, rank_frac, eta=None):
+    # k = test_x.shape[0]
+    # z = train_y.reshape([k, -1]).shape[-1]
     train_y, (t_mu, t_sig) = task_standardize(train_y, train_x)
     rank = int(rank_frac * z) if rank_frac > 0 else None
     
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    task_covar_prior = LKJCovariancePrior(n=z, 
-                                          eta=torch.tensor(eta/2).to(device),
-                                          sd_prior=SmoothedBoxPrior(math.exp(-6), math.exp(1.25), 0.05))
+    if eta is None:
+        task_covar_prior = None
+    else:
+        task_covar_prior = LKJCovariancePrior(n=z, 
+                                            eta=torch.tensor(eta).to(device),
+                                            sd_prior=SmoothedBoxPrior(math.exp(-6), math.exp(1.25), 0.05)).to(device)
     model = MultiTaskGP(train_x, train_y, task_feature=-1, 
                         rank=rank,
-                        task_covar_prior=task_covar_prior.to(device),
+                        task_covar_prior=task_covar_prior,
                         ).to(device)
 
     train_x, train_y = train_x.to(device), train_y.to(device)
@@ -301,7 +304,7 @@ def full_model(train_x, train_y, test_x):
                 current_avg = sum(metric_history[-window_size:]) / window_size
                 prev_avg = sum(metric_history[-(window_size+1):-1]) / window_size
                 # Check if the moving average is rising
-                if current_avg > prev_avg * 1.005:  # Small threshold to avoid stopping due to tiny fluctuations
+                if current_avg > prev_avg * 1.004:  # Small threshold to avoid stopping due to tiny fluctuations
                     consecutive_rises += 1
                     if consecutive_rises >= rise_patience//2:
                         logging.info(f'FYI: Early stopping at iteration {i+1}: metric rising for {consecutive_rises} consecutive checks')
@@ -309,8 +312,8 @@ def full_model(train_x, train_y, test_x):
                 else:
                     consecutive_rises = 0
                     
-        # if i % (log_fit//10) == 0:
-        logging.info(f'ITER-{i}/{max_iter} - Loss: {loss.item():.3f}, metric: {metric:.3f}')
+        if i % (log_fit//10) == 0:
+            logging.info(f'ITER-{i}/{max_iter} - Loss: {loss.item():.3f}, metric: {metric:.3f}')
         #-------------------------------------------------------
         optimizer.step()
     #---- end train loop --------------------------------------------------
@@ -339,32 +342,45 @@ def full_model(train_x, train_y, test_x):
     
     # current max estimate
     i = np.argmax(y_mean)
-    current_best_checkpoint = x_vals[i]
-    # current_y_mean = y_mean[i] # current y_mean estimate at peak_idx of y_mean estimate
+    regression_y_max = y_mean[i] # current y_mean estimate at peak_idx of y_mean estimate
+    j = np.argmax(V.mean(axis=1))
+    # true_y_max = V.mean(axis=1)[j]
     
-    # percent difference between current_y_mean and best_y_mean
-    current_y_mean = V.mean(axis=1)[i] # true y_mean at peak_idx of y_mean estimate
-    current_err = err = abs(current_y_mean - best_y_mean)/best_y_mean
-    
-    
-    #------------------------------------------------------------------
-    
-    # plot GP regression
-    # K,Z = test_Y.shape
-    test_Y_mu = test_Y.mean(axis=1)
-    plt.figure(figsize=(15, 10))
     x_vals = checkpoint_nums
-    plt.plot(x_vals, y_mean, 'b')
-    plt.fill_between(x_vals, y_mean - 2*y_sigma, y_mean + 2*y_sigma, alpha=0.5)
-    plt.plot(x_vals, test_Y_mu, 'r')
+    regression_best_checkpoint = x_vals[i]
+    true_best_checkpoint = x_vals[j]
+    # regression_err = err = abs(regression_y_max - true_y_max)/true_y_max
     
-    plt.legend(['Posterior Mean', 'Confidence', 'True Mean'])
-    # plt.title(f'Round: {self.round} - Current Best Checkpoint: {self.current_best_checkpoint}')
-    # self.display()
-    plt.show()
+    # logging.info(f'REG BEST CHECKPOINT:\t{regression_best_checkpoint}\tY={regression_y_max:.4f}')
+    #------------------------------------------------------------------
+    # plot GP regression
+    # test_Y_mu = test_Y.mean(axis=1)
+    # plt.figure(figsize=(15, 10))
+    # plt.plot(x_vals, y_mean, 'b')
+    # plt.fill_between(x_vals, y_mean - 2*y_sigma, y_mean + 2*y_sigma, alpha=0.5)
+    # plt.plot(x_vals, test_Y_mu, 'r')
+    # plt.legend(['Posterior Mean', 'Confidence', 'True Mean'])
+    # plt.title(f'Full Regression Model - Rank: {rank} - Regression Best Checkpoint: {regression_best_checkpoint}')
+    # # draw vertical line at regression best checkpoint
+    # plt.axvline(x=regression_best_checkpoint, color='g', linestyle='--', label='Regression Best Checkpoint')
+    # plt.axvline(x=true_best_checkpoint, color='m', linestyle='--', label='True Best Checkpoint')
+    # display_fig(run_dir)
+    #-------------------------------------------------------------------
+    # return regression_best_checkpoint, regression_y_max, y_mean
+    return y_mean
+#--------------------------------------------------------------------------
+# fit full regression model to all data
+# reference_y = full_model(full_X, full_Y, K, Z, rank_frac=0.5)#, eta=1.0)
 
+# shortcut
+reference_y = V.mean(axis=1)
 
-full_mod = full_model(full_X, full_Y, test_X)
+i = np.argmax(reference_y)
+regression_best_checkpoint = checkpoint_nums[i]
+regression_y_max = reference_y[i]
+
+logging.info(f'TRU BEST CHECKPOINT:\t{best_checkpoint}\tY={best_y_mean:.4f}')
+logging.info(f'REF BEST CHECKPOINT:\t{regression_best_checkpoint}\tY={regression_y_max:.4f}')
 
 #--------------------------------------------------------------------------
 
@@ -586,11 +602,12 @@ class BotorchSampler:
         
         # percent difference between current_y_mean and best_y_mean
         current_y_mean = V.mean(axis=1)[i] # true y_mean at peak_idx of y_mean estimate
-        self.current_err = err = abs(current_y_mean - best_y_mean)/best_y_mean
+        current_y_val = reference_y[i] # regression_y at peak_idx of y_mean estimate
+        self.current_err = err = abs(current_y_val - regression_y_max)/regression_y_max
         
         logging.info('-'*80)
-        logging.info(f'[ROUND-{self.round+1}]\t{self.current_best_checkpoint}\t{current_y_mean:.2f}\t{err:.4g}\t{self.sample_fraction:.4f}')
-        logging.info(f'[ROUND-{self.round+1}]\tCURRENT BEST\tCHECKPOINT-{self.current_best_checkpoint}\tY_PRED={current_y_mean:.4f}\tY_ERR={100*err:.4g}%\t({100*self.sample_fraction:.2f}% sampled)')
+        logging.info(f'[ROUND-{self.round+1}]\t{self.current_best_checkpoint}\t{current_y_val:.2f}\t{err:.4g}\t{self.sample_fraction:.4f}')
+        logging.info(f'[ROUND-{self.round+1}]\tCURRENT BEST\tCHECKPOINT-{self.current_best_checkpoint}\tY_PRED={current_y_val:.4f}\tY_ERR={100*err:.4g}%\t({100*self.sample_fraction:.2f}% sampled)')
         
         self.y_pred = y_pred
         self.y_mean = y_mean
@@ -602,18 +619,22 @@ class BotorchSampler:
     # Plotting functions
     
     def display(self, fig=None, fn=None):
-        if self.run_dir is not None:
-            j = len([f for f in os.listdir(self.run_dir) if f.endswith('.png')])
-            if fn is None:
-                fn = os.path.join(self.run_dir, f'fig_{j+1}.png')
-            if fig is None:
-                plt.savefig(fn)
-                plt.close()
-            else:
-                fig.savefig(fn)
-                del fig
-        else:
-            plt.show()
+        display_fig(self.run_dir, fig=fig, fn=fn)
+        
+    
+    # def display(self, fig=None, fn=None):
+    #     if self.run_dir is not None:
+    #         j = len([f for f in os.listdir(self.run_dir) if f.endswith('.png')])
+    #         if fn is None:
+    #             fn = os.path.join(self.run_dir, f'fig_{j+1}.png')
+    #         if fig is None:
+    #             plt.savefig(fn)
+    #             plt.close()
+    #         else:
+    #             fig.savefig(fn)
+    #             del fig
+    #     else:
+    #         plt.show()
     
     def plot_posterior_mean(self):
         K,Z = self.test_Y.shape
@@ -627,7 +648,7 @@ class BotorchSampler:
         plt.title(f'Round: {self.round} - Current Best Checkpoint: {self.current_best_checkpoint}')
         self.display()
         
-    def plot_task(self, j, msg=''):
+    def plot_task(self, j, msg='', fvals=None):
         plt.figure(figsize=(15, 10))
         
         # x_grid = self.test_X
@@ -643,10 +664,8 @@ class BotorchSampler:
         
         # inverse normalize x
         xx = xx * self.x_width + self.x_min
-        
         yy = to_numpy(self.train_Y[idx])
         plt.plot(xx, yy, 'ro')
-        
         
         # Plot predictive means as blue line
         plt.plot(x_grid, self.y_pred[:, j], 'b')
@@ -788,7 +807,11 @@ class BotorchSampler:
         logging.info('='*80)
         
         # plot task (before sampling)
-        self.plot_task(next_j, '(before)')
+        # get acq_values for task: next_j
+        acq_values = acq_values.reshape(self.k, self.z)
+        acq_values_j = acq_values[:, next_j]
+        
+        self.plot_task(next_j, '(before)', acq_values_j)
         
         # add new sample to training set (observe) and update mask 
         self.sampled_mask[next_i, next_j] = True
