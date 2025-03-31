@@ -68,8 +68,8 @@ log_loop = 5
 use_cuda = True
 
 # TODO: redefine EI with mean (not sum) ???????????????????????????????????????????
-use_ei = False
-use_logei = True
+use_ei = True
+use_logei = False
 ucb_lambda = 3
 ucb_gamma = 0.995
 
@@ -620,21 +620,6 @@ class BotorchSampler:
     
     def display(self, fig=None, fn=None):
         display_fig(self.run_dir, fig=fig, fn=fn)
-        
-    
-    # def display(self, fig=None, fn=None):
-    #     if self.run_dir is not None:
-    #         j = len([f for f in os.listdir(self.run_dir) if f.endswith('.png')])
-    #         if fn is None:
-    #             fn = os.path.join(self.run_dir, f'fig_{j+1}.png')
-    #         if fig is None:
-    #             plt.savefig(fn)
-    #             plt.close()
-    #         else:
-    #             fig.savefig(fn)
-    #             del fig
-    #     else:
-    #         plt.show()
     
     def plot_posterior_mean(self):
         K,Z = self.test_Y.shape
@@ -648,38 +633,60 @@ class BotorchSampler:
         plt.title(f'Round: {self.round} - Current Best Checkpoint: {self.current_best_checkpoint}')
         self.display()
         
+        
     def plot_task(self, j, msg='', fvals=None):
-        plt.figure(figsize=(15, 10))
+        fig, ax1 = plt.subplots(figsize=(15, 10))
         
         # x_grid = self.test_X
         x_grid = self.x_vals
         
         # Plot all data as black stars
-        plt.plot(x_grid, self.test_Y[:, j], 'k*')
+        ax1.plot(x_grid, self.test_Y[:, j], 'k*')
         
         # Plot training (observed) data as red circles
         idx = np.where(to_numpy(self.train_X)[:,1] == j)
-        # plt.plot(to_numpy(self.train_X[idx][:,0]), to_numpy(self.train_Y[idx]), 'ro')
         xx = to_numpy(self.train_X[idx][:,0])
         
         # inverse normalize x
         xx = xx * self.x_width + self.x_min
         yy = to_numpy(self.train_Y[idx])
-        plt.plot(xx, yy, 'ro')
+        ax1.plot(xx, yy, 'ro')
         
         # Plot predictive means as blue line
-        plt.plot(x_grid, self.y_pred[:, j], 'b')
+        ax1.plot(x_grid, self.y_pred[:, j], 'b')
         
         # confidences
         win = 2 * self.y_sig[:, j]
-        plt.fill_between(x_grid, self.y_pred[:, j] - win, self.y_pred[:, j] + win, alpha=0.5)
+        ax1.fill_between(x_grid, self.y_pred[:, j] - win, self.y_pred[:, j] + win, alpha=0.5)
         
-        plt.legend(['Unobserved', 'Observed', 'Posterior Mean', 'Confidence'])
+        # Set up primary y-axis labels
+        ax1.set_xlabel('X')
+        ax1.set_ylabel('Y')
+        
+        if fvals is not None:
+            # Create secondary y-axis for fvals
+            ax2 = ax1.twinx()
+            
+            # Plot fvals as green dashed line on secondary axis
+            ax2.plot(x_grid, fvals, 'g--')
+            ax2.set_ylabel('Acquisition Function Value', color='g')
+            ax2.tick_params(axis='y', labelcolor='g')
+            
+            # # Legend for both axes
+            # lines1, labels1 = ax1.get_legend_handles_labels()
+            # lines2, labels2 = ax2.get_legend_handles_labels()
+            
+            # Create custom legend with all elements
+            ax1.legend(
+                ['Unobserved', 'Observed', 'Posterior Mean', 'Confidence', 'AcqFxn'],
+                loc='best'
+            )
+        else:
+            ax1.legend(['Unobserved', 'Observed', 'Posterior Mean', 'Confidence'])
+        
         plt.title(f'Round: {self.round} - Task: {j} {msg}')
-
-        # save figure
+        plt.tight_layout()  # Adjust layout to make room for the second y-axis label
         self.display()
-        # self.display(plt.gcf())
     
     def plot_all(self, max_fig=None):
         Z = test_Y.shape[-1]
@@ -698,22 +705,16 @@ class BotorchSampler:
         S_max = S_mu[S_max_idx]
         
         # get unsampled indices
-        unsampled_indices = np.where(~self.sampled_mask)
-
-        # get list of unsampled tasks, if any
-        unsampled_tasks = np.setdiff1d(np.arange(Z), np.unique(np.where(self.sampled_mask)[1]))
-        i_indices, j_indices = unsampled_indices
-
-        # Create mask for unsampled tasks check
-        mask = np.ones(len(i_indices), dtype=bool)
-        if unsampled_tasks.size > 0:
-            mask = np.isin(j_indices, unsampled_tasks)
-            
-        # Initialize EI array with -inf for invalid entries
-        EI = np.full(len(i_indices), -math.inf)
-
+        i_indices, j_indices = np.where(np.ones_like(self.sampled_mask))
+        mask = (~self.sampled_mask).reshape(-1)
+        
         # Vectorized computation of all EI components
         valid_i, valid_j = i_indices[mask], j_indices[mask]
+            
+        # Initialize EI array with -inf for invalid entries
+        EI = np.full(len(mask), -math.inf)
+
+        # Vectorized computation of all EI components
         mu = self.y_pred[valid_i, valid_j]
         sig = self.y_sig[valid_i, valid_j]
 
@@ -734,6 +735,8 @@ class BotorchSampler:
         else:
             # normal EI
             ei = imp * norm.cdf(z) + sig * norm.pdf(z)
+            # take log
+            ei = np.log(ei)
             ei_values = ei
 
         # Assign computed values to valid positions
@@ -748,22 +751,13 @@ class BotorchSampler:
         # S_max = S_mu[S_max_idx]
         
         # get unsampled indices
-        unsampled_indices = np.where(~self.sampled_mask)
-
-        # get list of unsampled tasks, if any
-        unsampled_tasks = np.setdiff1d(np.arange(Z), np.unique(np.where(self.sampled_mask)[1]))
-        i_indices, j_indices = unsampled_indices
-
-        # Create mask for unsampled tasks check
-        mask = np.ones(len(i_indices), dtype=bool)
-        if unsampled_tasks.size > 0:
-            mask = np.isin(j_indices, unsampled_tasks)
-            
+        i_indices, j_indices = np.where(np.ones_like(self.sampled_mask))
+        mask = (~self.sampled_mask).reshape(-1)
         # Initialize EI array with -inf for invalid entries
-        UCB = np.full(len(i_indices), -math.inf)
-
+        UCB = np.full(len(mask), -math.inf)
         # Vectorized computation of all EI components
         valid_i, valid_j = i_indices[mask], j_indices[mask]
+        
         mu = self.y_pred[valid_i, valid_j]
         sig = self.y_sig[valid_i, valid_j]
 
@@ -778,7 +772,7 @@ class BotorchSampler:
         UCB[mask] = ucb
         max_ucb = np.max(ucb)
         return UCB, max_ucb
-
+    
     
     # use EI to choose next sample
     def sample_next(self):
