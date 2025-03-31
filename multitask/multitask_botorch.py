@@ -36,8 +36,8 @@ fn = 'phi4-math-4claude.txt'
 
 # number of random obs-per-task (opt) to initially sample
 # if <1, then fraction of total obs
-init_obs    = 2
-# init_obs    = 0.05
+# init_obs    = 2
+init_obs    = 0.05
 
 # stop BO sampling after this fraction of points are sampled
 max_sample = 0.06
@@ -52,7 +52,7 @@ use_curvature = True
 metric_check_interval = 5  # Check degree every n iterations
 window_size = 3  # Size of moving average window
 min_iterations = 50  # Minimum iterations before allowing early stopping
-rise_patience = 10  # Numb
+rise_patience = 10  # Number of consecutive rises to trigger stopping
 
 # rank_frac = 0.5 # 0.25
 rank_frac = 0.25
@@ -225,7 +225,8 @@ checkpoints = (checkpoint_nums - checkpoint_nums.min()) / (checkpoint_nums.max()
 # find best checkpoint
 best_idx = np.argmax(V.mean(axis=1))
 best_checkpoint = checkpoint_nums[best_idx]
-logging.info(f'TRUE BEST CHECKPOINT: {best_checkpoint}')
+best_y_mean = V.mean(axis=1)[best_idx]
+logging.info(f'TRUE BEST CHECKPOINT: {best_checkpoint}\tY={best_y_mean:.4f}')
 
 # subsample data
 x_idx, t_idx = init_samples(K, Z, init_obs)
@@ -240,8 +241,130 @@ for i, j in zip(x_idx, t_idx):
 
 # build useful tensors and arrays
 full_X = torch.tensor([ [checkpoints[i], j] for i, j in  zip(*full_indices) ], dtype=torch.float64)
+full_Y = torch.tensor(V[full_indices], dtype=torch.float64).unsqueeze(-1)
 test_X = np.array(checkpoints)
 test_Y = np.array(V)
+
+#--------------------------------------------------------------------------
+# Full Data Regression Model
+
+def full_model(train_x, train_y, test_x):
+    k = test_x.shape[0]
+    z = train_y.reshape([k, -1]).shape[-1]
+    train_y, (t_mu, t_sig) = task_standardize(train_y, train_x)
+    rank = int(rank_frac * z) if rank_frac > 0 else None
+    
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    task_covar_prior = LKJCovariancePrior(n=z, 
+                                          eta=torch.tensor(eta/2).to(device),
+                                          sd_prior=SmoothedBoxPrior(math.exp(-6), math.exp(1.25), 0.05))
+    model = MultiTaskGP(train_x, train_y, task_feature=-1, 
+                        rank=rank,
+                        task_covar_prior=task_covar_prior.to(device),
+                        ).to(device)
+
+    train_x, train_y = train_x.to(device), train_y.to(device)
+    
+    # Set the model and likelihood to training mode
+    model.train()
+    model.likelihood.train() # need this ???
+    
+    # "Loss" for GPs - the marginal log likelihood
+    mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood=model.likelihood, model=model)
+    # Use the adam optimizer
+    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+    
+    metric_history = []
+    consecutive_rises = 0
+    
+    max_iter = max_iterations//2
+    
+    for i in range(max_iter):
+        optimizer.zero_grad()
+        output = model(train_x)
+        loss = -mll(output, model.train_targets)
+        loss.backward()
+        #-------------------------------------------------------
+        if i % (metric_check_interval//2) == 0:
+            if use_curvature:
+                metric = curvature_metric(model, train_x, verbose=False)
+            else:
+                metric = degree_metric(model, train_x)
+            metric_history.append(metric)
+            
+            # print degree and curve (debugging)
+            # logging.info(f'Iter {i}/{max_iter} - Loss: {loss.item():.3f}, avg_degree: {degree:.3f}, curvature: {curve:.3f}')
+            
+            # Only check for early stopping after collecting enough data points
+            if len(metric_history) >= window_size + 1 and i >= min_iterations//2:
+                # Calculate current and previous moving averages
+                current_avg = sum(metric_history[-window_size:]) / window_size
+                prev_avg = sum(metric_history[-(window_size+1):-1]) / window_size
+                # Check if the moving average is rising
+                if current_avg > prev_avg * 1.005:  # Small threshold to avoid stopping due to tiny fluctuations
+                    consecutive_rises += 1
+                    if consecutive_rises >= rise_patience//2:
+                        logging.info(f'FYI: Early stopping at iteration {i+1}: metric rising for {consecutive_rises} consecutive checks')
+                        break
+                else:
+                    consecutive_rises = 0
+                    
+        # if i % (log_fit//10) == 0:
+        logging.info(f'ITER-{i}/{max_iter} - Loss: {loss.item():.3f}, metric: {metric:.3f}')
+        #-------------------------------------------------------
+        optimizer.step()
+    #---- end train loop --------------------------------------------------
+    model.eval()
+    model.likelihood.eval()
+    with torch.no_grad(), gpytorch.settings.fast_pred_var():
+        predictions = model.likelihood(model(train_x))
+        
+    #----------------------------------------------------------------------
+    y_mean = predictions.mean
+    y_var = predictions.variance
+    y_covar = predictions.covariance_matrix
+    
+    # reshape
+    y_pred = to_numpy(y_mean.reshape(k, z))
+    y_var = to_numpy(y_var.reshape(k, z))
+    y_covar = to_numpy(y_covar.reshape((k, z, k, z)))
+    
+    # inverse standardize...
+    y_pred = y_pred * t_sig + t_mu
+    y_var = y_var * t_sig**2
+    y_sig = np.sqrt(y_var)
+    y_mean = y_pred.mean(axis=1)
+    y_covar = y_covar * t_sig**2
+    y_sigma = np.array([np.sqrt(y_covar[i,:,i].sum()) for i in range(k)]) / z
+    
+    # current max estimate
+    i = np.argmax(y_mean)
+    current_best_checkpoint = x_vals[i]
+    # current_y_mean = y_mean[i] # current y_mean estimate at peak_idx of y_mean estimate
+    
+    # percent difference between current_y_mean and best_y_mean
+    current_y_mean = V.mean(axis=1)[i] # true y_mean at peak_idx of y_mean estimate
+    current_err = err = abs(current_y_mean - best_y_mean)/best_y_mean
+    
+    
+    #------------------------------------------------------------------
+    
+    # plot GP regression
+    # K,Z = test_Y.shape
+    test_Y_mu = test_Y.mean(axis=1)
+    plt.figure(figsize=(15, 10))
+    x_vals = checkpoint_nums
+    plt.plot(x_vals, y_mean, 'b')
+    plt.fill_between(x_vals, y_mean - 2*y_sigma, y_mean + 2*y_sigma, alpha=0.5)
+    plt.plot(x_vals, test_Y_mu, 'r')
+    
+    plt.legend(['Posterior Mean', 'Confidence', 'True Mean'])
+    # plt.title(f'Round: {self.round} - Current Best Checkpoint: {self.current_best_checkpoint}')
+    # self.display()
+    plt.show()
+
+
+full_mod = full_model(full_X, full_Y, test_X)
 
 #--------------------------------------------------------------------------
 
@@ -337,10 +460,10 @@ class BotorchSampler:
             if self.rank_frac > 0:
                 w = self.num_fit_attempts * (z-rank)//self.max_fit_attempts
                 rank = min(z, rank + w)
-                logging.info(f'FYI: rank adjusted to {rank}')
+                logging.info(f'[ROUND-{self.round+1}]\tFYI: rank adjusted to {rank}')
             # eta adjustment... ??
             eta = eta * (self.eta_gamma ** self.num_fit_attempts)
-            logging.info(f'FYI: eta adjusted to {eta:.4g}')
+            logging.info(f'[ROUND-{self.round+1}]\tFYI: eta adjusted to {eta:.4g}')
                 
         #---------------------------------------------------------------------
         # define task_covar_prior (IMPORTANT!!! nothing works without this...)
@@ -412,12 +535,12 @@ class BotorchSampler:
                     if current_avg > prev_avg * 1.005:  # Small threshold to avoid stopping due to tiny fluctuations
                         consecutive_rises += 1
                         if consecutive_rises >= rise_patience:
-                            logging.info(f'FYI: Early stopping at iteration {i+1}: metric rising for {consecutive_rises} consecutive checks')
+                            logging.info(f'[ROUND-{self.round+1}]\tFYI: Early stopping at iteration {i+1}: metric rising for {consecutive_rises} consecutive checks')
                             break
                     else:
                         consecutive_rises = 0
             if i % self.log_interval == 0:
-                logging.info(f'Iter {i}/{self.max_iterations} - Loss: {loss.item():.3f}, metric: {metric:.3f}')
+                logging.info(f'[ROUND-{self.round+1}]\tITER-{i}/{self.max_iterations} - Loss: {loss.item():.3f}, metric: {metric:.3f}')
                 # logging.info(f'Iter {i}/{self.max_iterations} - Loss: {loss.item():.3f}, curvature: {curve:.3f}')
                 # logging.info(f'Iter {i}/{self.max_iterations} - Loss: {loss.item():.3f}, avg_degree: {degree:.3f}, curvature: {curve:.3f}')
                 
@@ -459,10 +582,15 @@ class BotorchSampler:
         # current max estimate
         i = np.argmax(y_mean)
         self.current_best_checkpoint = self.x_vals[i]
+        # current_y_mean = y_mean[i] # current y_mean estimate at peak_idx of y_mean estimate
+        
+        # percent difference between current_y_mean and best_y_mean
+        current_y_mean = V.mean(axis=1)[i] # true y_mean at peak_idx of y_mean estimate
+        self.current_err = err = abs(current_y_mean - best_y_mean)/best_y_mean
         
         logging.info('-'*80)
-        logging.info(f'ROUND:{self.round+1}\t{self.current_best_checkpoint}\t{self.sample_fraction:.4f}')
-        logging.info(f'CURRENT BEST\tCHECKPOINT-{self.current_best_checkpoint}\t{100*self.sample_fraction:.2f}% sampled')
+        logging.info(f'[ROUND-{self.round+1}]\t{self.current_best_checkpoint}\t{current_y_mean:.2f}\t{err:.4g}\t{self.sample_fraction:.4f}')
+        logging.info(f'[ROUND-{self.round+1}]\tCURRENT BEST\tCHECKPOINT-{self.current_best_checkpoint}\tY_PRED={current_y_mean:.4f}\tY_ERR={100*err:.4g}%\t({100*self.sample_fraction:.2f}% sampled)')
         
         self.y_pred = y_pred
         self.y_mean = y_mean
@@ -638,7 +766,7 @@ class BotorchSampler:
         self.round += 1
         if not use_ei:
             self.ucb_lambda = self.ucb_lambda * self.ucb_gamma
-            logging.info(f'UCB lambda: {self.ucb_lambda:.4g}')
+            logging.info(f'[ROUND-{self.round+1}]\tUCB lambda: {self.ucb_lambda:.4g}')
         
         
         unsampled_indices = np.where(~self.sampled_mask)
@@ -656,7 +784,7 @@ class BotorchSampler:
         next_i, next_j = x_unsampled[next_idx]
         next_checkpoint = self.x_vals[next_i]
         
-        logging.info(f'NEXT SAMPLE\tCHECKPOINT-{next_checkpoint}\tTASK-{next_j}\t(acq_fxn_max={max_val:.3g})')
+        logging.info(f'[ROUND-{self.round+1}]\tNEXT SAMPLE\tCHECKPOINT-{next_checkpoint}\tTASK-{next_j}\t(acq_fxn_max={max_val:.3g})')
         logging.info('='*80)
         
         # plot task (before sampling)

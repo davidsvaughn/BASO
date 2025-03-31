@@ -65,7 +65,9 @@ def curvature_metric(model, X, z=None, verbose=False):
     for i in range(z):
         y = to_numpy(mean[:, i])
         x = to_numpy(X[X[:,1]==i][:,0])
+        
         d = second_derivative(x, y)
+        # d2 = second_derivative_old(x, y)
         # plt.plot(x, y)
         # plt.show()
         deriv.extend(np.abs(d))
@@ -82,7 +84,70 @@ def curvature_metric(model, X, z=None, verbose=False):
         plt.show()
     return mean_max
 
-def second_derivative_new(x, y):
+def second_derivative(x, y):
+    """
+    Estimate the second derivative at each point along a curve using vectorized operations.
+    
+    Parameters:
+    X : numpy.ndarray
+        2D array where X[:, 0] contains x-coordinates and X[:, 1] contains y-coordinates.
+        Points should be sorted by x-coordinate.
+    
+    Returns:
+    numpy.ndarray
+        Array of second derivative estimates at each point.
+    """
+    # Extract x and y coordinates
+    # x = X[:, 0]
+    # y = X[:, 1]
+    
+    n = len(x)
+    second_derivatives = np.zeros_like(y)
+    
+    # Need at least 3 points for second derivative
+    if n < 3:
+        return second_derivatives
+    
+    # For interior points (1 to n-2), we can vectorize this
+    # Creating slices for the interior calculations
+    x_prev = x[:-2]  # x_{i-1} values
+    x_curr = x[1:-1]  # x_i values
+    x_next = x[2:]    # x_{i+1} values
+    
+    y_prev = y[:-2]  # y_{i-1} values
+    y_curr = y[1:-1]  # y_i values
+    y_next = y[2:]    # y_{i+1} values
+    
+    # Calculate steps
+    h1 = x_curr - x_prev  # Backward steps
+    h2 = x_next - x_curr  # Forward steps
+    
+    # Vectorized calculation for all interior points
+    second_derivatives[1:-1] = (
+        2 * y_prev / (h1 * (h1 + h2)) -
+        2 * y_curr / (h1 * h2) +
+        2 * y_next / (h2 * (h1 + h2))
+    )
+    
+    # First point
+    h1, h2 = x[1] - x[0], x[2] - x[1]
+    second_derivatives[0] = (
+        2 * y[0] / (h1 * (h1 + h2)) -
+        2 * y[1] / (h1 * h2) +
+        2 * y[2] / (h2 * (h1 + h2))
+    )
+    
+    # Last point
+    h1, h2 = x[n-2] - x[n-3], x[n-1] - x[n-2]
+    second_derivatives[n-1] = (
+        2 * y[n-3] / (h1 * (h1 + h2)) -
+        2 * y[n-2] / (h1 * h2) +
+        2 * y[n-1] / (h2 * (h1 + h2))
+    )
+    
+    return second_derivatives
+
+def second_derivative_X(x, y):
     """
     Estimate the second derivative at each point along a curve using vectorized operations.
     
@@ -148,7 +213,7 @@ def second_derivative_new(x, y):
     
     return second_derivatives
 
-def second_derivative(x, y):
+def second_derivative_old(x, y):
     """
     Estimate the second derivative at each point along a curve.
     
