@@ -16,6 +16,8 @@ import shutil
 import traceback
 
 from botorch.models import MultiTaskGP
+from botorch.acquisition.analytic import LogExpectedImprovement
+from botorch.acquisition.objective import PosteriorTransform
 from gpytorch.priors import LKJCovariancePrior, SmoothedBoxPrior
 
 from utils import task_standardize, display_fig, inv_task_standardize, inspect_matrix
@@ -45,20 +47,20 @@ max_sample = 0.06
 # MLE estimation
 learning_rate = 0.1
 max_iterations = 1000
-max_attempts = 15
+max_attempts = 20
 
 # metric stopping criteria
 use_curvature = True
 metric_check_interval = 5  # Check degree every n iterations
 window_size = 3  # Size of moving average window
 min_iterations = 50  # Minimum iterations before allowing early stopping
-rise_patience = 10  # Number of consecutive rises to trigger stopping
+rise_patience = 5  # Number of consecutive rises to trigger stopping
 
 # rank_frac = 0.5 # 0.25
 rank_frac = 0.25
 
 # lkj prior
-eta = 0.5
+eta = 0.25
 eta_gamma = 0.9
 
 # logging intervals
@@ -71,8 +73,8 @@ use_cuda = True
 use_ei = True
 use_logei = True
 ei_beta = 0.5
-# beta will be ei_f its start value when ei_t of all points have been sampled
-ei_f, ei_t = 0.1, 0.05
+# beta will be ei_f of its start value when ei_t of all points have been sampled
+ei_f, ei_t = 0.1, 0.04
 # ei_gamma = 0.9925
 
 
@@ -493,7 +495,7 @@ class BotorchSampler:
                 rank = min(z, rank + w)
                 logging.info(f'[ROUND-{self.round+1}]\tFYI: rank adjusted to {rank}')
             # eta adjustment... ??
-            eta = eta * (self.eta_gamma ** self.num_fit_attempts)
+            eta = eta * (self.eta_gamma ** max(0, self.num_fit_attempts - self.max_fit_attempts//2))
             logging.info(f'[ROUND-{self.round+1}]\tFYI: eta adjusted to {eta:.4g}')
                 
         #---------------------------------------------------------------------
@@ -719,6 +721,9 @@ class BotorchSampler:
         S_max_idx = np.argmax(S_mu)
         S_max = S_mu[S_max_idx]
         
+        best_f =self.y_pred.max()
+        LogEI = LogExpectedImprovement(self.model, best_f)
+        
         # get unsampled indices
         i_indices, j_indices = np.where(np.ones_like(self.sampled_mask))
         mask = (~self.sampled_mask).reshape(-1)
@@ -789,13 +794,9 @@ class BotorchSampler:
     #----------------------------------------------------------------------
     
     
-    # use EI to choose next sample
+    # choose next sample
     def sample_next(self):
-        # self.round += 1
-        
-        # unsampled_indices = np.where(~self.sampled_mask)
-        # x_unsampled = np.array(unsampled_indices).T
-        
+       
         # acquisition function
         if use_ei:
             # expected improvement
@@ -809,8 +810,7 @@ class BotorchSampler:
             self.ucb_lambda = self.ucb_lambda * self.ucb_gamma
             logging.info(f'[ROUND-{self.round+1}]\tUCB lambda: {self.ucb_lambda:.4g}')
         
-        # next_idx = np.argmax(acq_values)
-        # next_i, next_j = x_unsampled[next_idx]
+        # convert to original checkpoint numbers
         next_checkpoint = self.x_vals[next_i]
         
         logging.info(f'[ROUND-{self.round+1}]\tNEXT SAMPLE\tCHECKPOINT-{next_checkpoint}\tTASK-{next_j}\t(acq_fxn_max={max_val:.3g})')
@@ -821,9 +821,15 @@ class BotorchSampler:
         # self.plot_task(next_j, '(before)', acq_values_2.reshape(self.k, self.z)[:, next_j]) # debugging
         
         # add new sample to training set (observe) and update mask 
-        self.sampled_mask[next_i, next_j] = True
         self.train_X = torch.cat([self.train_X, torch.tensor([ [self.test_X[next_i], next_j] ], dtype=torch.float64)])
         self.train_Y = torch.cat([self.train_Y, torch.tensor([self.test_Y[next_i, next_j]], dtype=torch.float64).unsqueeze(-1)])
+        self.sampled_mask[next_i, next_j] = True
+        
+        # find task with most samples
+        task_counts = np.sum(self.sampled_mask, axis=0)
+        max_task = np.argmax(task_counts)
+        max_count = task_counts[max_task]
+        logging.info(f'[ROUND-{self.round+1}]\tTASK-{max_task} has most samples: {max_count}')
         
         # return next sample
         return next_i, next_j
