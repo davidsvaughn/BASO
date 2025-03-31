@@ -58,7 +58,7 @@ rise_patience = 10  # Number of consecutive rises to trigger stopping
 rank_frac = 0.25
 
 # lkj prior
-eta = 0.25
+eta = 0.5
 eta_gamma = 0.9
 
 # logging intervals
@@ -69,7 +69,13 @@ use_cuda = True
 
 # TODO: redefine EI with mean (not sum) ???????????????????????????????????????????
 use_ei = True
-use_logei = False
+use_logei = True
+ei_beta = 0.5
+# beta will be ei_f its start value when ei_t of all points have been sampled
+ei_f, ei_t = 0.1, 0.05
+# ei_gamma = 0.9925
+
+
 ucb_lambda = 3
 ucb_gamma = 0.995
 
@@ -163,6 +169,10 @@ if task_sample>0 and task_sample!=1:
     idx = np.random.choice(range(Z), task_sample, replace=False)
     V = V[:, idx]
     K,Z = V.shape
+    
+# ei_gamma
+ei_gamma = np.exp(np.log(ei_f) / (ei_t*K*Z - 2*Z))
+logging.info('FYI: ei_gamma: %s', ei_gamma)
 
 #-------------------------------------------------------------------------
 
@@ -370,10 +380,10 @@ def full_model(train_x, train_y, k, z, rank_frac, eta=None):
     return y_mean
 #--------------------------------------------------------------------------
 # fit full regression model to all data
-# reference_y = full_model(full_X, full_Y, K, Z, rank_frac=0.5)#, eta=1.0)
+reference_y = full_model(full_X, full_Y, K, Z, rank_frac=0.5)#, eta=1.0)
 
 # shortcut
-reference_y = V.mean(axis=1)
+# reference_y = V.mean(axis=1)
 
 i = np.argmax(reference_y)
 regression_best_checkpoint = checkpoint_nums[i]
@@ -394,6 +404,8 @@ class BotorchSampler:
                  rank_frac=0.5,
                  eta=0.25,
                  eta_gamma=0.9,
+                 ei_beta=0.5,
+                 ei_gamma=0.9925,
                  ucb_lambda=3,
                  ucb_gamma=0.995,
                  log_interval=50,
@@ -417,6 +429,8 @@ class BotorchSampler:
         self.rank_frac = rank_frac
         self.eta = eta
         self.eta_gamma = eta_gamma
+        self.ei_beta = ei_beta
+        self.ei_gamma = ei_gamma
         self.ucb_lambda = ucb_lambda
         self.ucb_gamma = ucb_gamma
         self.log_interval = log_interval
@@ -444,6 +458,7 @@ class BotorchSampler:
     
     # repeatedly attempt to fit model
     def fit(self):
+        self.round += 1
         clear_cuda_tensors(logging)
         for i in range(self.max_fit_attempts):
             if self._fit():
@@ -606,7 +621,7 @@ class BotorchSampler:
         self.current_err = err = abs(current_y_val - regression_y_max)/regression_y_max
         
         logging.info('-'*80)
-        logging.info(f'[ROUND-{self.round+1}]\t{self.current_best_checkpoint}\t{current_y_val:.2f}\t{err:.4g}\t{self.sample_fraction:.4f}')
+        logging.info(f'[ROUND-{self.round+1}]\tSTATS\t{self.current_best_checkpoint}\t{current_y_val:.2f}\t{err:.4g}\t{self.sample_fraction:.4f}')
         logging.info(f'[ROUND-{self.round+1}]\tCURRENT BEST\tCHECKPOINT-{self.current_best_checkpoint}\tY_PRED={current_y_val:.4f}\tY_ERR={100*err:.4g}%\t({100*self.sample_fraction:.2f}% sampled)')
         
         self.y_pred = y_pred
@@ -699,7 +714,7 @@ class BotorchSampler:
     #-------------------------------------------------------------------------
     
     # compute expected improvement
-    def expected_improvement(self):
+    def expected_improvement(self, beta=0):
         S_mu = self.y_pred.sum(axis=-1)
         S_max_idx = np.argmax(S_mu)
         S_max = S_mu[S_max_idx]
@@ -724,26 +739,23 @@ class BotorchSampler:
 
         # improvement vector, z-scores
         s_max = S_max - sx
-        imp = mu - s_max # - beta
+        imp = mu - s_max - beta
         z = imp/sig
 
         if use_logei:
             # logEI computation (for stability)
             logh = log_h(torch.tensor(z, dtype=torch.float64)).numpy()
             ei = np.log(sig) + logh
-            ei_values = np.exp(ei)
         else:
             # normal EI
             ei = imp * norm.cdf(z) + sig * norm.pdf(z)
             # take log
             ei = np.log(ei)
-            ei_values = ei
 
-        # Assign computed values to valid positions
+        # Assign computed values to valid positions and return
         EI[mask] = ei
-        EI = np.array(EI)
-        max_ei = np.max(ei_values)
-        return EI, max_ei
+        k = np.argmax(EI)
+        return EI, EI[k], i_indices[k], j_indices[k]
     
     def ucb(self):
         S_mu = self.y_pred.sum(axis=-1)
@@ -769,43 +781,44 @@ class BotorchSampler:
         # row_vals = row_means
         
         ucb = row_vals + self.ucb_lambda * sig
+        
+        # Assign computed values to valid positions and return
         UCB[mask] = ucb
-        max_ucb = np.max(ucb)
-        return UCB, max_ucb
+        k = np.argmax(UCB)
+        return UCB, UCB[k], i_indices[k], j_indices[k]
+    #----------------------------------------------------------------------
     
     
     # use EI to choose next sample
     def sample_next(self):
-        self.round += 1
-        if not use_ei:
-            self.ucb_lambda = self.ucb_lambda * self.ucb_gamma
-            logging.info(f'[ROUND-{self.round+1}]\tUCB lambda: {self.ucb_lambda:.4g}')
+        # self.round += 1
         
-        
-        unsampled_indices = np.where(~self.sampled_mask)
-        x_unsampled = np.array(unsampled_indices).T
+        # unsampled_indices = np.where(~self.sampled_mask)
+        # x_unsampled = np.array(unsampled_indices).T
         
         # acquisition function
         if use_ei:
             # expected improvement
-            acq_values, max_val = self.expected_improvement()
+            acq_values, max_val, next_i, next_j = self.expected_improvement(beta=self.ei_beta)
+            # acq_values_2, _ = self.expected_improvement(beta=0.5) # debugging
+            self.ei_beta = self.ei_beta * self.ei_gamma
+            logging.info(f'[ROUND-{self.round+1}]\tEI beta: {self.ei_beta:.4g}')
         else:
             # upper confidence bound
-            acq_values, max_val = self.ucb()
+            acq_values, max_val, next_i, next_j = self.ucb()
+            self.ucb_lambda = self.ucb_lambda * self.ucb_gamma
+            logging.info(f'[ROUND-{self.round+1}]\tUCB lambda: {self.ucb_lambda:.4g}')
         
-        next_idx = np.argmax(acq_values)
-        next_i, next_j = x_unsampled[next_idx]
+        # next_idx = np.argmax(acq_values)
+        # next_i, next_j = x_unsampled[next_idx]
         next_checkpoint = self.x_vals[next_i]
         
         logging.info(f'[ROUND-{self.round+1}]\tNEXT SAMPLE\tCHECKPOINT-{next_checkpoint}\tTASK-{next_j}\t(acq_fxn_max={max_val:.3g})')
         logging.info('='*80)
         
         # plot task (before sampling)
-        # get acq_values for task: next_j
-        acq_values = acq_values.reshape(self.k, self.z)
-        acq_values_j = acq_values[:, next_j]
-        
-        self.plot_task(next_j, '(before)', acq_values_j)
+        self.plot_task(next_j, '(before)', acq_values.reshape(self.k, self.z)[:, next_j])
+        # self.plot_task(next_j, '(before)', acq_values_2.reshape(self.k, self.z)[:, next_j]) # debugging
         
         # add new sample to training set (observe) and update mask 
         self.sampled_mask[next_i, next_j] = True
