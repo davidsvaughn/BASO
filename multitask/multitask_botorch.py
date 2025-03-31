@@ -40,12 +40,19 @@ init_obs    = 2
 # init_obs    = 0.05
 
 # stop BO sampling after this fraction of points are sampled
-max_sample = 0.05
+max_sample = 0.06
 
 # MLE estimation
 learning_rate = 0.1
 max_iterations = 1000
 max_attempts = 15
+
+# metric stopping criteria
+use_curvature = True
+metric_check_interval = 5  # Check degree every n iterations
+window_size = 3  # Size of moving average window
+min_iterations = 50  # Minimum iterations before allowing early stopping
+rise_patience = 10  # Numb
 
 # rank_frac = 0.5 # 0.25
 rank_frac = 0.25
@@ -61,9 +68,10 @@ log_loop = 5
 use_cuda = True
 
 # TODO: redefine EI with mean (not sum) ???????????????????????????????????????????
-use_ei = True
-use_logei = True
-ucb_lambda = 10
+use_ei = False
+use_logei = False
+ucb_lambda = 3
+ucb_gamma = 0.995
 
 # select random subset of tasks
 task_sample = 1
@@ -247,6 +255,8 @@ class BotorchSampler:
                  rank_frac=0.5,
                  eta=0.25,
                  eta_gamma=0.9,
+                 ucb_lambda=3,
+                 ucb_gamma=0.995,
                  log_interval=50,
                  max_fit_attempts=10,
                  use_cuda=True,
@@ -268,6 +278,8 @@ class BotorchSampler:
         self.rank_frac = rank_frac
         self.eta = eta
         self.eta_gamma = eta_gamma
+        self.ucb_lambda = ucb_lambda
+        self.ucb_gamma = ucb_gamma
         self.log_interval = log_interval
         self.device = torch.device("cuda" if torch.cuda.is_available() and use_cuda else "cpu")
         if use_cuda:
@@ -358,11 +370,11 @@ class BotorchSampler:
         
         # degree stopping criterion
         metric_history = []
-        window_size = 3  # Size of moving average window
         consecutive_rises = 0
-        metric_check_interval = 5  # Check degree every n iterations
-        min_iterations = 50  # Minimum iterations before allowing early stopping
-        rise_patience = 5  # Number of consecutive rises to trigger stopping
+        # metric_check_interval = 5  # Check degree every n iterations
+        # window_size = 3  # Size of moving average window
+        # min_iterations = 50  # Minimum iterations before allowing early stopping
+        # rise_patience = 5  # Number of consecutive rises to trigger stopping
         
         # train loop
         for i in range(self.max_iterations):
@@ -381,11 +393,12 @@ class BotorchSampler:
             loss.backward()
             
             if i % metric_check_interval == 0:
-                degree = degree_metric(self.model, self.full_x)
-                curve = curvature_metric(self.model, self.full_x, verbose=False)
-                
-                # metric_history.append(degree)
-                metric_history.append(curve)
+
+                if use_curvature:
+                    metric = curvature_metric(self.model, self.full_x, verbose=False)
+                else:
+                    metric = degree_metric(self.model, self.full_x)
+                metric_history.append(metric)
                 
                 # print degree and curve (debugging)
                 # logging.info(f'Iter {i}/{self.max_iterations} - Loss: {loss.item():.3f}, avg_degree: {degree:.3f}, curvature: {curve:.3f}')
@@ -404,9 +417,9 @@ class BotorchSampler:
                     else:
                         consecutive_rises = 0
             if i % self.log_interval == 0:
-                # logging.info(f'Iter {i}/{self.max_iterations} - Loss: {loss.item():.3f}, avg_degree: {degree:.3f}')
+                logging.info(f'Iter {i}/{self.max_iterations} - Loss: {loss.item():.3f}, metric: {metric:.3f}')
                 # logging.info(f'Iter {i}/{self.max_iterations} - Loss: {loss.item():.3f}, curvature: {curve:.3f}')
-                logging.info(f'Iter {i}/{self.max_iterations} - Loss: {loss.item():.3f}, avg_degree: {degree:.3f}, curvature: {curve:.3f}')
+                # logging.info(f'Iter {i}/{self.max_iterations} - Loss: {loss.item():.3f}, avg_degree: {degree:.3f}, curvature: {curve:.3f}')
                 
             optimizer.step()
             
@@ -614,7 +627,7 @@ class BotorchSampler:
         row_vals = row_sums
         # row_vals = row_means
         
-        ucb = row_vals + ucb_lambda * sig
+        ucb = row_vals + self.ucb_lambda * sig
         UCB[mask] = ucb
         max_ucb = np.max(ucb)
         return UCB, max_ucb
@@ -623,6 +636,11 @@ class BotorchSampler:
     # use EI to choose next sample
     def sample_next(self):
         self.round += 1
+        if not use_ei:
+            self.ucb_lambda = self.ucb_lambda * self.ucb_gamma
+            logging.info(f'UCB lambda: {self.ucb_lambda:.4g}')
+        
+        
         unsampled_indices = np.where(~self.sampled_mask)
         x_unsampled = np.array(unsampled_indices).T
         
@@ -661,6 +679,8 @@ sampler = BotorchSampler(full_X, sampled_mask,
                          lr=learning_rate,
                          eta=eta,
                          eta_gamma=eta_gamma,
+                         ucb_lambda=ucb_lambda,
+                         ucb_gamma=ucb_gamma,
                          max_iterations=max_iterations,
                          max_fit_attempts=max_attempts,
                          max_sample=max_sample, 
