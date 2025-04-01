@@ -17,10 +17,10 @@ import traceback
 
 from botorch.models import MultiTaskGP
 from botorch.acquisition.analytic import LogExpectedImprovement
-from botorch.acquisition.objective import PosteriorTransform
+from botorch.acquisition.objective import ScalarizedPosteriorTransform
 from gpytorch.priors import LKJCovariancePrior, SmoothedBoxPrior
 
-from utils import task_standardize, display_fig, inv_task_standardize, inspect_matrix
+from utils import task_standardize, display_fig, StoppingTracker #, inv_task_standardize, inspect_matrix
 from utils import to_numpy, degree_metric, log_h, clear_cuda_tensors, curvature_metric
 
 # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -38,7 +38,7 @@ fn = 'phi4-math-4claude.txt'
 
 # number of random obs-per-task (opt) to initially sample
 # if <1, then fraction of total obs
-init_obs    = 2
+init_obs    = 3
 # init_obs    = 0.05
 
 # stop BO sampling after this fraction of points are sampled
@@ -51,10 +51,10 @@ max_attempts = 20
 
 # metric stopping criteria
 use_curvature = True
-metric_check_interval = 5  # Check degree every n iterations
+stop_check_interval = 5  # Check degree every n iterations
 window_size = 3  # Size of moving average window
-min_iterations = 50  # Minimum iterations before allowing early stopping
-rise_patience = 5  # Number of consecutive rises to trigger stopping
+min_iterations = 100  # Minimum iterations before allowing early stopping
+rise_patience = 10  # Number of consecutive rises to trigger stopping
 
 # rank_frac = 0.5 # 0.25
 rank_frac = 0.25
@@ -64,12 +64,12 @@ eta = 0.25
 eta_gamma = 0.9
 
 # logging intervals
-log_fit = 50
+log_fit = 25
 log_loop = 5
 
 use_cuda = True
 
-# TODO: redefine EI with mean (not sum) ???????????????????????????????????????????
+# Expected Improvement parameters
 use_ei = True
 use_logei = True
 ei_beta = 0.5
@@ -77,7 +77,7 @@ ei_beta = 0.5
 ei_f, ei_t = 0.1, 0.04
 # ei_gamma = 0.9925
 
-
+# UCB parameters
 ucb_lambda = 3
 ucb_gamma = 0.995
 
@@ -276,6 +276,7 @@ def full_model(train_x, train_y, k, z, rank_frac, eta=None):
     model = MultiTaskGP(train_x, train_y, task_feature=-1, 
                         rank=rank,
                         task_covar_prior=task_covar_prior,
+                        outcome_transform=None,
                         ).to(device)
 
     train_x, train_y = train_x.to(device), train_y.to(device)
@@ -300,7 +301,7 @@ def full_model(train_x, train_y, k, z, rank_frac, eta=None):
         loss = -mll(output, model.train_targets)
         loss.backward()
         #-------------------------------------------------------
-        if i % (metric_check_interval//2) == 0:
+        if i % (stop_check_interval//2) == 0:
             if use_curvature:
                 metric = curvature_metric(model, train_x, verbose=False)
             else:
@@ -382,10 +383,10 @@ def full_model(train_x, train_y, k, z, rank_frac, eta=None):
     return y_mean
 #--------------------------------------------------------------------------
 # fit full regression model to all data
-reference_y = full_model(full_X, full_Y, K, Z, rank_frac=0.5)#, eta=1.0)
+# reference_y = full_model(full_X, full_Y, K, Z, rank_frac=0.5)#, eta=1.0)
 
 # shortcut
-# reference_y = V.mean(axis=1)
+reference_y = V.mean(axis=1)
 
 i = np.argmax(reference_y)
 regression_best_checkpoint = checkpoint_nums[i]
@@ -484,7 +485,12 @@ class BotorchSampler:
         
         # compute rank
         rank = int(self.rank_frac * z) if self.rank_frac > 0 else None
+        
+        # setup parameters
         eta = self.eta
+        lr = self.lr
+        patience=10
+        min_iterations=100
         
         #---------------------------------------------------------------------
         # if fit is failing...
@@ -497,6 +503,11 @@ class BotorchSampler:
             # eta adjustment... ??
             eta = eta * (self.eta_gamma ** max(0, self.num_fit_attempts - self.max_fit_attempts//2))
             logging.info(f'[ROUND-{self.round+1}]\tFYI: eta adjusted to {eta:.4g}')
+            # lr adjustment...
+            # lr = lr * (0.925 ** self.num_fit_attempts)
+            
+            patience = max(5, patience - self.num_fit_attempts//2)
+            min_iterations = max(50, min_iterations - 10*self.num_fit_attempts//2)
                 
         #---------------------------------------------------------------------
         # define task_covar_prior (IMPORTANT!!! nothing works without this...)
@@ -511,6 +522,7 @@ class BotorchSampler:
         self.model = MultiTaskGP(train_x, train_y, task_feature=-1, 
                                  rank=rank,
                                  task_covar_prior=task_covar_prior.to(self.device),
+                                 outcome_transform=None,
                                  ).to(self.device)
 
         train_x, train_y = train_x.to(self.device), train_y.to(self.device)
@@ -522,21 +534,36 @@ class BotorchSampler:
         # "Loss" for GPs - the marginal log likelihood
         mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood=self.model.likelihood, model=self.model)
         # Use the adam optimizer
-        optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
         
-        # degree stopping criterion
-        metric_history = []
-        consecutive_rises = 0
-        # metric_check_interval = 5  # Check degree every n iterations
-        # window_size = 3  # Size of moving average window
-        # min_iterations = 50  # Minimum iterations before allowing early stopping
-        # rise_patience = 5  # Number of consecutive rises to trigger stopping
+        # stopping criteria
+        
+        loss_tracker = StoppingTracker(
+            # interval=stop_check_interval,
+            window_size=5,
+            patience=patience,
+            min_iterations=min_iterations,
+            name="loss",
+            mode="improvement",
+            threshold=0.0005,  # 0.1% improvement is considered significant
+            direction="down"  # loss should decrease
+        )
+        
+        metric_tracker = StoppingTracker(
+            interval=stop_check_interval,
+            window_size=10,
+            patience=patience,
+            min_iterations=min_iterations,
+            name="metric",
+            mode="direction",
+            threshold=1.005,
+            direction="up"  # metric should increase
+        )
         
         # train loop
         for i in range(self.max_iterations):
             optimizer.zero_grad()
             output = self.model(train_x)
-
             try:
                 loss = -mll(output, self.model.train_targets)
             except Exception as e:
@@ -545,33 +572,35 @@ class BotorchSampler:
                 else:
                     logging.error(f'error in loss calculation at iteration {i}:\n{e}')
                 return False
-            
             loss.backward()
             
-            if i % metric_check_interval == 0:
+            loss_tracker.add_value(loss.item())
+            # if loss_tracker.should_stop():
+            #     logging.info(f'[ROUND-{self.round+1}]\tFYI: Early stopping at iteration {i+1}: loss stagnating')
+            #     break
+            
+            if i % stop_check_interval == 0:
 
                 if use_curvature:
                     metric = curvature_metric(self.model, self.full_x, verbose=False)
                 else:
                     metric = degree_metric(self.model, self.full_x)
-                metric_history.append(metric)
+                    
+                metric_tracker.add_value(metric)
+                # loss_tracker.add_value(loss.item())   
                 
-                # print degree and curve (debugging)
-                # logging.info(f'Iter {i}/{self.max_iterations} - Loss: {loss.item():.3f}, avg_degree: {degree:.3f}, curvature: {curve:.3f}')
+                # Check either/both stopping criteria
+                stop1 = loss_tracker.should_stop()
+                stop2 = metric_tracker.should_stop()
+                stop = stop1 and stop2
+                if self.num_fit_attempts > self.max_fit_attempts//4:
+                    stop = stop1 or stop2
+                if stop:
+                    logging.info(f'[ROUND-{self.round+1}]\tFYI: Early stopping at iteration {i+1}: metric rising for {metric_tracker.consecutive_count} consecutive checks')
+                    break
                 
-                # Only check for early stopping after collecting enough data points
-                if len(metric_history) >= window_size + 1 and i >= min_iterations:
-                    # Calculate current and previous moving averages
-                    current_avg = sum(metric_history[-window_size:]) / window_size
-                    prev_avg = sum(metric_history[-(window_size+1):-1]) / window_size
-                    # Check if the moving average is rising
-                    if current_avg > prev_avg * 1.005:  # Small threshold to avoid stopping due to tiny fluctuations
-                        consecutive_rises += 1
-                        if consecutive_rises >= rise_patience:
-                            logging.info(f'[ROUND-{self.round+1}]\tFYI: Early stopping at iteration {i+1}: metric rising for {consecutive_rises} consecutive checks')
-                            break
-                    else:
-                        consecutive_rises = 0
+                #--------------------------------------------------------
+      
             if i % self.log_interval == 0:
                 logging.info(f'[ROUND-{self.round+1}]\tITER-{i}/{self.max_iterations} - Loss: {loss.item():.3f}, metric: {metric:.3f}')
                 # logging.info(f'Iter {i}/{self.max_iterations} - Loss: {loss.item():.3f}, curvature: {curve:.3f}')
@@ -721,8 +750,20 @@ class BotorchSampler:
         S_max_idx = np.argmax(S_mu)
         S_max = S_mu[S_max_idx]
         
-        best_f =self.y_pred.max()
-        LogEI = LogExpectedImprovement(self.model, best_f)
+        #----------------------------------------------------------
+        # EXPERIMENTAL!!!
+        
+        # transform = ScalarizedPosteriorTransform(weights=torch.ones(self.z, dtype=torch.float64))
+        # LogEI = LogExpectedImprovement(self.model, best_f=S_max, posterior_transform=transform)
+        
+        # # t1 = self.model(self.full_x)
+        # # t2 = transform(t1)
+        # # a = LogEI(t2)
+        
+        # ac_values = LogEI(self.full_x.unsqueeze(-2))
+        # # ac_values = LogEI(self.model.posterior(self.full_x))
+        # # ac_values = ac_values.mean.squeeze(-1).cpu().numpy()
+        #----------------------------------------------------------
         
         # get unsampled indices
         i_indices, j_indices = np.where(np.ones_like(self.sampled_mask))
@@ -843,6 +884,8 @@ sampler = BotorchSampler(full_X, sampled_mask,
                          lr=learning_rate,
                          eta=eta,
                          eta_gamma=eta_gamma,
+                         ei_beta=ei_beta,
+                         ei_gamma=ei_gamma,
                          ucb_lambda=ucb_lambda,
                          ucb_gamma=ucb_gamma,
                          max_iterations=max_iterations,
