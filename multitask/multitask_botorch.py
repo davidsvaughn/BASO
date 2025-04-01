@@ -13,17 +13,14 @@ import math
 from scipy.stats import gaussian_kde
 from math import ceil
 from glob import glob
-import shutil
 import traceback
+# import shutil
 
 from botorch.models import MultiTaskGP
-from botorch.acquisition.analytic import LogExpectedImprovement
-from botorch.acquisition.objective import ScalarizedPosteriorTransform
-from botorch import fit_gpytorch_mll
 from gpytorch.priors import LKJCovariancePrior, SmoothedBoxPrior
 
-from utils import task_standardize, display_fig, StoppingTracker #, inv_task_standardize, inspect_matrix
-from utils import to_numpy, degree_metric, log_h, clear_cuda_tensors, curvature_metric
+from utils import task_standardize, display_fig, StoppingTracker
+from utils import to_numpy, log_h, clear_cuda_tensors
 
 # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 torch.set_default_dtype(torch.float64)
@@ -34,7 +31,7 @@ rank_frac = -1
 # SET PARAMETERS
 
 fn = 'phi4-math-4claude.txt'
-# fn = 'phi4-bw-4claude.txt'
+fn = 'phi4-bw-4claude.txt'
 
 # rand_seed = 2951
 
@@ -51,31 +48,24 @@ learning_rate = 0.1
 min_iterations = 100
 max_iterations = 1000
 max_retries = 20
-
 use_cuda = True
-
-rank_frac = 0.25
 
 # lkj prior
 eta = 0.25
 eta_gamma = 0.9
-
-# logging intervals
-log_interval = 25
-verbosity = 1
-
+rank_frac = 0.25
 
 # Expected Improvement parameters
 use_ei = True
 use_logei = True
 ei_beta = 0.5
 # beta will be ei_f of its start value when ei_t of all points have been sampled
-ei_f, ei_t = 0.1, 0.04
+ei_f, ei_t = 0.2, 0.05
 # ei_gamma = 0.9925
 
-# UCB parameters
-ucb_lambda = 3
-ucb_gamma = 0.995
+# logging intervals
+log_interval = 25
+verbosity = 1
 
 # select random subset of tasks
 task_sample = 1
@@ -156,7 +146,6 @@ def log(msg, verbosity_level=1,
 def warn(msg, verbosity_level=1, level=logging.WARNING):
     log(msg, verbosity_level=verbosity_level, level=level)
     
-
 log('-'*80)
 log(f'Run directory: {run_dir}')
 log(f'Random seed: {rand_seed}')
@@ -182,7 +171,7 @@ if task_sample>0 and task_sample!=1:
     V = V[:, idx]
     K,Z = V.shape
     
-# ei_gamma
+# compute ei_gamma
 ei_gamma = np.exp(np.log(ei_f) / (ei_t*K*Z - 2*Z))
 log('FYI: ei_gamma: %s', ei_gamma)
 
@@ -234,38 +223,13 @@ def init_samples(K, Z, init_obs):
         for j in tasks:
             x.append(i)
             y.append(j)
-    return np.array(x), np.array(y)
-            
-#--------------------------------------------------------------------------     
-# init dataset constructs
-sampled_mask = np.zeros_like(V, dtype=bool)
-full_indices = np.where(np.ones_like(V))
-
-# min/max normalize checkpoints to unit interval (cube)
-checkpoints = (checkpoint_nums - checkpoint_nums.min()) / (checkpoint_nums.max() - checkpoint_nums.min())
-
-# find best checkpoint
-best_idx = np.argmax(V.mean(axis=1))
-best_checkpoint = checkpoint_nums[best_idx]
-best_y_mean = V.mean(axis=1)[best_idx]
-# log(f'TRUE BEST CHECKPOINT:\t{best_checkpoint}\tY={best_y_mean:.4f}')
-
-# subsample data
-x_idx, t_idx = init_samples(K, Z, init_obs)
-
-train_X = torch.tensor([ [checkpoints[i], j] for i, j in  zip(x_idx, t_idx) ], dtype=torch.float64)
-train_Y = torch.tensor(V[x_idx, t_idx], dtype=torch.float64).unsqueeze(-1)
-
-for i, j in zip(x_idx, t_idx):
-    sampled_mask[i, j] = True
-
-#--------------------------------------------------------------------------
-
-# build useful tensors and arrays
-full_X = torch.tensor([ [checkpoints[i], j] for i, j in  zip(*full_indices) ], dtype=torch.float64)
-full_Y = torch.tensor(V[full_indices], dtype=torch.float64).unsqueeze(-1)
-test_X = np.array(checkpoints)
-test_Y = np.array(V)
+    x, y = np.array(x), np.array(y)
+                    
+    sampled_mask = np.zeros((K, Z), dtype=bool)
+    for i, j in zip(x, y):
+        sampled_mask[i, j] = True
+    
+    return x, y, sampled_mask
 
 #--------------------------------------------------------------------------
 # fit full regression model to all data for gold standard
@@ -352,17 +316,34 @@ def fit_mll_model(train_x, train_y, k, z,
     y_mean = y_pred.mean(axis=1)
     return y_mean
 
+#--------------------------------------------------------------------------     
+# init dataset constructs
+full_indices = np.where(np.ones_like(V))
+
+# min/max normalize checkpoints to unit interval (cube)
+checkpoints = (checkpoint_nums - checkpoint_nums.min()) / (checkpoint_nums.max() - checkpoint_nums.min())
+
+# find best checkpoint
+best_idx = np.argmax(V.mean(axis=1))
+best_checkpoint = checkpoint_nums[best_idx]
+best_y_mean = V.mean(axis=1)[best_idx]
+# log(f'TRUE BEST CHECKPOINT:\t{best_checkpoint}\tY={best_y_mean:.4f}')
+
+# build useful tensors and arrays
+full_X = torch.tensor([ [checkpoints[i], j] for i, j in  zip(*full_indices) ], dtype=torch.float64)
+full_Y = torch.tensor(V[full_indices], dtype=torch.float64).unsqueeze(-1)
+test_X = np.array(checkpoints)
+test_Y = np.array(V)
+
 #--------------------------------------------------------------------------
 # Train regression model on all data for gold standard
 
-# reference_y = V.mean(axis=1) # shortcut
-
-# fit full regression model to all data
 reference_y = fit_mll_model(full_X, full_Y, K, Z, rank_frac=0.5,
                             learning_rate=learning_rate,
                             max_iterations=max_iterations,
                             min_iterations=min_iterations,
                             )
+# reference_y = V.mean(axis=1) # shortcut
 
 i = np.argmax(reference_y)
 regression_best_checkpoint = checkpoint_nums[i]
@@ -384,15 +365,13 @@ class BotorchSampler:
                  eta_gamma=0.9,
                  ei_beta=0.5,
                  ei_gamma=0.9925,
-                 ucb_lambda=3,
-                 ucb_gamma=0.995,
                  log_interval=50,
                  max_retries=10,
                  verbosity=1,
                  use_cuda=True,
-                 run_dir=None):   
-        self.sampled_mask = sampled_mask
+                 run_dir=None): 
         
+        self.sampled_mask = sampled_mask
         self.train_X = train_X
         self.train_Y = train_Y
         self.x_vals = test_X # original checkpoint numbers
@@ -411,12 +390,8 @@ class BotorchSampler:
         self.ei_beta = ei_beta
         self.ei_gamma = ei_gamma
         self.ei_decay = 1.0
-        self.ucb_lambda = ucb_lambda
-        self.ucb_gamma = ucb_gamma
         self.log_interval = log_interval
         self.verbosity = verbosity
-        
-        
         
         self.device = torch.device("cuda" if torch.cuda.is_available() and use_cuda else "cpu")
         if use_cuda:
@@ -776,7 +751,6 @@ class BotorchSampler:
     
     #----------------------------------------------------------------------
     
-    
     # choose next sample
     def sample_next(self):
        
@@ -806,44 +780,57 @@ class BotorchSampler:
         task_counts = np.sum(self.sampled_mask, axis=0)
         max_task = np.argmax(task_counts)
         max_count = task_counts[max_task]
-        log(f'[ROUND-{self.round+1}]\tTASK-{max_task} has most samples: {max_count}')
+        log(f'[ROUND-{self.round+2}]\tTASK-{max_task} has most samples: {max_count}')
         
         # return next sample
         return next_i, next_j
 
 #--------------------------------------------------------------------------
-# Initialize the sampler
-sampler = BotorchSampler(full_X, sampled_mask,
-                         train_X=train_X, train_Y=train_Y, 
-                         test_X=checkpoint_nums, test_Y=test_Y,
-                         lr=learning_rate,
-                         eta=eta,
-                         eta_gamma=eta_gamma,
-                         ei_beta=ei_beta,
-                         ei_gamma=ei_gamma,
-                         ucb_lambda=ucb_lambda,
-                         ucb_gamma=ucb_gamma,
-                         max_iterations=max_iterations,
-                         max_retries=max_retries,
-                         verbosity=verbosity,
-                         max_sample=max_sample, 
-                         rank_frac=rank_frac,
-                         log_interval=log_interval,
-                         use_cuda=use_cuda,
-                         run_dir=run_dir)
 
+for _ in range(10):
+    
+    try:
+        # Subsample data
+        x_idx, t_idx, sampled_mask = init_samples(K, Z, init_obs)
+        train_X = torch.tensor([ [checkpoints[i], j] for i, j in  zip(x_idx, t_idx) ], dtype=torch.float64)
+        train_Y = torch.tensor(V[x_idx, t_idx], dtype=torch.float64).unsqueeze(-1)
+            
+        # Initialize the sampler
+        sampler = BotorchSampler(full_X, sampled_mask,
+                                train_X=train_X, train_Y=train_Y, 
+                                test_X=checkpoint_nums, test_Y=test_Y,
+                                lr=learning_rate,
+                                eta=eta,
+                                eta_gamma=eta_gamma,
+                                ei_beta=ei_beta,
+                                ei_gamma=ei_gamma,
+                                max_iterations=max_iterations,
+                                max_retries=max_retries,
+                                verbosity=verbosity,
+                                max_sample=max_sample, 
+                                rank_frac=rank_frac,
+                                log_interval=log_interval,
+                                use_cuda=use_cuda,
+                                run_dir=run_dir)
 
-# Fit model to initial samples
-sampler.fit()
-sampler.predict()
-# sampler.plot_all(max_fig=10)
+        # Fit model to initial samples
+        sampler.fit()
+        sampler.predict()
+        # sampler.plot_all(max_fig=10)
 
-# Run Bayesian optimization loop
-while sampler.sample_fraction < max_sample:
-    _, next_task = sampler.sample_next()
-    sampler.fit()
-    sampler.predict()
-    sampler.plot_task(next_task, '(after)')
-    sampler.plot_posterior_mean()
+        # Run Bayesian optimization loop
+        while sampler.sample_fraction < max_sample:
+            _, next_task = sampler.sample_next()
+            sampler.fit()
+            sampler.predict()
+            sampler.plot_task(next_task, '(after)')
+            sampler.plot_posterior_mean()
+            
+        break
+        
+    except Exception as e:
+        log(f'ERROR: {e}')
+        log(traceback.format_exc())
+        pass
 
 #--------------------------------------------------------------------------
