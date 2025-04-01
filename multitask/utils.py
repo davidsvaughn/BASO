@@ -53,7 +53,13 @@ class StoppingTracker:
                  name="metric",
                  mode="direction",      # "direction" or "improvement"
                  direction="up",        # "up" or "down"
-                 threshold=1.005        # threshold factor for comparison
+                 threshold=1.005,        # threshold factor for comparison
+                 optimizer=None,
+                 lr_gamma=0.5,
+                 lr_steps=5,
+                 logging=None,
+                 prefix=None,
+                 burnin=None,
                 ):
         """
         Initialize the early stopping tracker.
@@ -79,6 +85,12 @@ class StoppingTracker:
         self.threshold = threshold
         self.min_iterations = min_iterations
         self.name = name
+        self.optimizer = optimizer
+        self.lr_gamma = lr_gamma
+        self.lr_steps = lr_steps
+        self.pfunc = logging.info if logging is not None else print
+        self.prefix = f'{prefix.strip()}\t' if prefix is not None else ''
+        self.burnin = burnin if burnin is not None else window_size*2
         
         # Validate and store parameters
         if mode not in ["direction", "improvement"]:
@@ -90,11 +102,16 @@ class StoppingTracker:
         self.direction = direction
         self.history = []
         self.consecutive_count = 0
+        self.lr_step = 0
     
-    def add_value(self, value):
-        """Add a new value to the history."""
+    def step(self, value):
+        """ Add a new value to the history.
+            Checks if early stopping is triggered, 
+            Otherwise triggers lr reduction if needed.
+            Returns True if early stopping is triggered, False otherwise.
+        """
         self.history.append(value)
-        return self
+        return self.check()
     
     def _get_average(self, offset=0):
         """Get moving average with specified offset from the end."""
@@ -131,7 +148,7 @@ class StoppingTracker:
     def should_stop(self):
         """Check if early stopping criteria are met."""
         # Only check after collecting enough data points and exceeding minimum iterations
-        if len(self.history) < self.window_size + 1: #  or len(self.history)*self.interval < self.min_iterations:
+        if len(self.history) < self.window_size + 1: #  or self.iteration < self.min_iterations:
             return False
         
         # Get current and previous moving averages
@@ -143,11 +160,47 @@ class StoppingTracker:
             self.consecutive_count += 1
             if self.consecutive_count >= self.patience:
                 # return True
-                return len(self.history)*self.interval >= self.min_iterations
+                if self.iteration >= self.min_iterations:
+                    self.pfunc(f"{self.prefix}Check failed: {self.name} stagnating for {self.patience} iterations.")
+                    return True
+                return False
         else:
             self.consecutive_count = 0
-        
+            
+        # also check if trend is in right direction
+        if self.mode == "improvement" and self.iteration >= self.min_iterations:
+            if self.direction == "up":
+                if current_avg < prev_avg:
+                    self.pfunc(f"{self.prefix}Check failed: {self.name} is not going up consistently.")
+                    return True
+            else:
+                if current_avg > prev_avg:
+                    self.pfunc(f"{self.prefix}Check failed: {self.name} is not going down consistently.")
+                    return True
         return False
+    
+    def check(self):
+        """Check if early stopping criteria are met and adjust learning rate if needed."""
+        if self.should_stop():
+            if self.optimizer is None or self.lr_step==self.lr_steps:
+                self.pfunc(f"{self.prefix}Stopping early.")
+                return True
+            self.reduce_lr()
+        return False
+    
+    def reduce_lr(self):
+        """Reduce learning rate if optimizer is set."""
+        if self.optimizer is None or self.lr_step==self.lr_steps:
+            return False
+        self.lr_step += 1
+        for param_group in self.optimizer.param_groups:
+            param_group['lr'] *= self.lr_gamma
+            lr = param_group['lr']
+        self.pfunc(f"{self.prefix}Reduced learning rate to {lr:.4f}")
+        self.consecutive_count = 0
+        if self.iteration >= self.min_iterations:
+            self.min_iterations = self.iteration + self.burnin
+        return True
     
     @property
     def latest_value(self):
@@ -163,6 +216,11 @@ class StoppingTracker:
     def previous_average(self):
         """Get the previous moving average."""
         return self._get_average(offset=1)
+    
+    @property
+    def iteration(self):
+        """Get the current iteration count."""
+        return len(self.history) * self.interval
     
     def reset(self):
         """Reset the tracker."""

@@ -48,7 +48,7 @@ max_sample = 0.06
 # MLE estimation
 learning_rate = 0.1
 max_iterations = 1000
-max_attempts = 20
+max_retries = 20
 
 # metric stopping criteria
 use_curvature = True
@@ -65,7 +65,7 @@ eta = 0.25
 eta_gamma = 0.9
 
 # logging intervals
-log_fit = 25
+log_fit = 5
 log_loop = 5
 
 use_cuda = True
@@ -385,10 +385,10 @@ def full_model(train_x, train_y, k, z, rank_frac, eta=None):
     return y_mean
 #--------------------------------------------------------------------------
 # fit full regression model to all data
-reference_y = full_model(full_X, full_Y, K, Z, rank_frac=0.5)#, eta=1.0)
+# reference_y = full_model(full_X, full_Y, K, Z, rank_frac=0.5)#, eta=1.0)
 
 # shortcut
-# reference_y = V.mean(axis=1)
+reference_y = V.mean(axis=1)
 
 i = np.argmax(reference_y)
 regression_best_checkpoint = checkpoint_nums[i]
@@ -414,7 +414,7 @@ class BotorchSampler:
                  ucb_lambda=3,
                  ucb_gamma=0.995,
                  log_interval=50,
-                 max_fit_attempts=10,
+                 max_retries=10,
                  use_cuda=True,
                  run_dir=None):   
         self.sampled_mask = sampled_mask
@@ -450,12 +450,12 @@ class BotorchSampler:
         self.run_dir = run_dir
         if run_dir is not None:
             plt.ioff()
-        self.max_fit_attempts = max_fit_attempts
+        self.max_retries = max_retries
         self.round = 0
         self.reset()
         
     def reset(self):
-        self.num_fit_attempts = -1
+        self.num_retries = -1
     
     @property
     def sample_fraction(self):
@@ -465,18 +465,18 @@ class BotorchSampler:
     def fit(self):
         self.round += 1
         clear_cuda_tensors(logging)
-        for i in range(self.max_fit_attempts):
+        for i in range(self.max_retries):
             if self._fit():
                 return True
             else:
-                if i+1 < self.max_fit_attempts:
+                if i+1 < self.max_retries:
                     logging.warning('-'*80)
                     logging.warning(f'FAILED... ATTEMPT {i+2}')
-        raise Exception('ERROR: Failed to fit model - max_fit_attempts reached')
+        raise Exception('ERROR: Failed to fit model - max_retries reached')
     
     # fit model inner loop
     def _fit(self):
-        self.num_fit_attempts += 1
+        self.num_retries += 1
         train_x = self.train_X
         train_y = self.train_Y
         k,z = self.k, self.z
@@ -490,26 +490,23 @@ class BotorchSampler:
         
         # setup parameters
         eta = self.eta
-        lr = self.lr
         patience=10
         min_iterations=100
         
         #---------------------------------------------------------------------
         # if fit is failing...
-        if self.num_fit_attempts > 0:
+        if self.num_retries > 0:
             # rank adjustment...
             if self.rank_frac > 0:
-                w = self.num_fit_attempts * (z-rank)//self.max_fit_attempts
+                w = self.num_retries * (z-rank)//self.max_retries
                 rank = min(z, rank + w)
                 logging.info(f'[ROUND-{self.round+1}]\tFYI: rank adjusted to {rank}')
             # eta adjustment... ??
-            eta = eta * (self.eta_gamma ** max(0, self.num_fit_attempts - self.max_fit_attempts//2))
+            eta = eta * (self.eta_gamma ** max(0, self.num_retries - self.max_retries//2))
             logging.info(f'[ROUND-{self.round+1}]\tFYI: eta adjusted to {eta:.4g}')
-            # lr adjustment...
-            # lr = lr * (0.925 ** self.num_fit_attempts)
-            
-            patience = max(5, patience - self.num_fit_attempts//2)
-            min_iterations = max(50, min_iterations - 10*self.num_fit_attempts//2)
+            # patience, min_iterations adjustment...
+            patience = max(5, patience - self.num_retries//2)
+            min_iterations = max(50, min_iterations - 10*self.num_retries//2)
                 
         #---------------------------------------------------------------------
         # define task_covar_prior (IMPORTANT!!! nothing works without this...)
@@ -525,7 +522,7 @@ class BotorchSampler:
                                  rank=rank,
                                  task_covar_prior=task_covar_prior.to(self.device),
                                  outcome_transform=None,
-                                 train_Yvar=torch.tensor(np.ones_like(train_y)) * 0.1,
+                                #  train_Yvar=torch.tensor(np.ones_like(train_y)) * 0.1,
                                  ).to(self.device)
 
         train_x, train_y = train_x.to(self.device), train_y.to(self.device)
@@ -539,17 +536,25 @@ class BotorchSampler:
         
         # fit_gpytorch_mll(mll, max_retries=1)
         
+        # Use the adam optimizer
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
+        
         #---------------------------------------------------------
         # stopping criteria
         loss_tracker = StoppingTracker(
             # interval=stop_check_interval,
+            optimizer=optimizer,
+            lr_gamma=0.8,
+            lr_steps=10,
             window_size=5,
             patience=patience,
             min_iterations=min_iterations,
             name="loss",
             mode="improvement",
             threshold=0.0005,  # 0.1% improvement is considered significant
-            direction="down"  # loss should decrease
+            direction="down",  # loss should decrease
+            logging=logging,
+            prefix=f'[ROUND-{self.round+1}]'  # Add prefix to log messages
         )
         
         metric_tracker = StoppingTracker(
@@ -563,9 +568,6 @@ class BotorchSampler:
             direction="up"  # metric should increase
         )
         
-        # Use the adam optimizer
-        optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
-        
         # train loop
         for i in range(self.max_iterations):
             optimizer.zero_grad()
@@ -573,50 +575,48 @@ class BotorchSampler:
             try:
                 loss = -mll(output, self.model.train_targets)
             except Exception as e:
-                if self.num_fit_attempts+1 == self.max_fit_attempts:
+                if self.num_retries+1 == self.max_retries:
                     logging.exception("An exception occurred")
                 else:
                     logging.error(f'error in loss calculation at iteration {i}:\n{e}')
                 return False
             loss.backward()
             
-            loss_tracker.add_value(loss.item())
-            # if loss_tracker.should_stop():
-            #     logging.info(f'[ROUND-{self.round+1}]\tFYI: Early stopping at iteration {i+1}: loss stagnating')
-            #     break
+            if loss_tracker.step(loss.item()):
+                # logging.info(f'[ROUND-{self.round+1}]\tFYI: Early stopping at iteration {i+1}: loss stagnating')
+                break
             
-            if i % stop_check_interval == 0:
-
-                if use_curvature:
-                    metric = curvature_metric(self.model, self.full_x, verbose=False)
-                else:
-                    metric = degree_metric(self.model, self.full_x)
-                    
-                metric_tracker.add_value(metric)
-                # loss_tracker.add_value(loss.item())   
+            #---------------------------------------------------------
+            # if i % stop_check_interval == 0:
+            #     if use_curvature:
+            #         metric = curvature_metric(self.model, self.full_x, verbose=False)
+            #     else:
+            #         metric = degree_metric(self.model, self.full_x)
+            #     metric_tracker.add_value(metric) 
                 
-                # Check either/both stopping criteria
-                stop1 = loss_tracker.should_stop()
-                stop2 = metric_tracker.should_stop()
-                stop = stop1 and stop2
-                if self.num_fit_attempts > self.max_fit_attempts//4:
-                    stop = stop1 or stop2
-                if stop:
-                    logging.info(f'[ROUND-{self.round+1}]\tFYI: Early stopping at iteration {i+1}: metric rising for {metric_tracker.consecutive_count} consecutive checks')
-                    break
-                
-                #--------------------------------------------------------
+            #     # Check either/both stopping criteria
+            #     stop1 = loss_tracker.should_stop()
+            #     stop2 = metric_tracker.should_stop()
+            #     stop = stop1 and stop2
+            #     if self.num_retries > self.max_retries//4:
+            #         stop = stop1 or stop2
+            #     if stop:
+            #         logging.info(f'[ROUND-{self.round+1}]\tFYI: Early stopping at iteration {i+1}: metric rising for {metric_tracker.consecutive_count} consecutive checks')
+            #         break    
+            #--------------------------------------------------------
       
             if i % self.log_interval == 0:
-                logging.info(f'[ROUND-{self.round+1}]\tITER-{i}/{self.max_iterations} - Loss: {loss.item():.3f}, metric: {metric:.3f}')
+                logging.info(f'[ROUND-{self.round+1}]\tITER-{i}/{self.max_iterations} - Loss: {loss.item():.4g}')
+                # logging.info(f'[ROUND-{self.round+1}]\tITER-{i}/{self.max_iterations} - Loss: {loss.item():.3f}, metric: {metric:.3f}')
                 # logging.info(f'Iter {i}/{self.max_iterations} - Loss: {loss.item():.3f}, curvature: {curve:.3f}')
                 # logging.info(f'Iter {i}/{self.max_iterations} - Loss: {loss.item():.3f}, avg_degree: {degree:.3f}, curvature: {curve:.3f}')
                 
-            optimizer.step()    
+            optimizer.step() 
+                
         #---- end train loop --------------------------------------------------
         
         
-        self.reset() # self.num_fit_attempts = 0
+        self.reset() # self.num_retries = 0
         return True
     #--------------------------------------------------------------------------
             
@@ -759,14 +759,11 @@ class BotorchSampler:
         
         #----------------------------------------------------------
         # EXPERIMENTAL!!!
-        
         # transform = ScalarizedPosteriorTransform(weights=torch.ones(self.z, dtype=torch.float64))
         # LogEI = LogExpectedImprovement(self.model, best_f=S_max, posterior_transform=transform)
-        
         # # t1 = self.model(self.full_x)
         # # t2 = transform(t1)
         # # a = LogEI(t2)
-        
         # ac_values = LogEI(self.full_x.unsqueeze(-2))
         # # ac_values = LogEI(self.model.posterior(self.full_x))
         # # ac_values = ac_values.mean.squeeze(-1).cpu().numpy()
@@ -795,14 +792,11 @@ class BotorchSampler:
         imp = mu - s_max - beta
         z = imp/sig
 
-        if use_logei:
-            # logEI computation (for stability)
+        if use_logei: # logEI computation (for stability)
             logh = log_h(torch.tensor(z, dtype=torch.float64)).numpy()
             ei = np.log(sig) + logh
-        else:
-            # normal EI
+        else: # normal EI
             ei = imp * norm.cdf(z) + sig * norm.pdf(z)
-            # take log
             ei = np.log(ei)
 
         # Assign computed values to valid positions and return
@@ -896,7 +890,7 @@ sampler = BotorchSampler(full_X, sampled_mask,
                          ucb_lambda=ucb_lambda,
                          ucb_gamma=ucb_gamma,
                          max_iterations=max_iterations,
-                         max_fit_attempts=max_attempts,
+                         max_retries=max_retries,
                          max_sample=max_sample, 
                          rank_frac=rank_frac,
                          log_interval=log_fit,
