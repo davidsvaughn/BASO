@@ -38,7 +38,7 @@ fn = 'phi4-math-4claude.txt'
 
 # number of random obs-per-task (opt) to initially sample
 # if <1, then fraction of total obs
-init_obs    = 3
+init_obs    = 2
 # init_obs    = 0.05
 
 # stop BO sampling after this fraction of points are sampled
