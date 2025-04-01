@@ -18,6 +18,7 @@ import traceback
 from botorch.models import MultiTaskGP
 from botorch.acquisition.analytic import LogExpectedImprovement
 from botorch.acquisition.objective import ScalarizedPosteriorTransform
+from botorch import fit_gpytorch_mll
 from gpytorch.priors import LKJCovariancePrior, SmoothedBoxPrior
 
 from utils import task_standardize, display_fig, StoppingTracker #, inv_task_standardize, inspect_matrix
@@ -287,6 +288,7 @@ def full_model(train_x, train_y, k, z, rank_frac, eta=None):
     
     # "Loss" for GPs - the marginal log likelihood
     mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood=model.likelihood, model=model)
+    
     # Use the adam optimizer
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     
@@ -383,10 +385,10 @@ def full_model(train_x, train_y, k, z, rank_frac, eta=None):
     return y_mean
 #--------------------------------------------------------------------------
 # fit full regression model to all data
-# reference_y = full_model(full_X, full_Y, K, Z, rank_frac=0.5)#, eta=1.0)
+reference_y = full_model(full_X, full_Y, K, Z, rank_frac=0.5)#, eta=1.0)
 
 # shortcut
-reference_y = V.mean(axis=1)
+# reference_y = V.mean(axis=1)
 
 i = np.argmax(reference_y)
 regression_best_checkpoint = checkpoint_nums[i]
@@ -523,6 +525,7 @@ class BotorchSampler:
                                  rank=rank,
                                  task_covar_prior=task_covar_prior.to(self.device),
                                  outcome_transform=None,
+                                 train_Yvar=torch.tensor(np.ones_like(train_y)) * 0.1,
                                  ).to(self.device)
 
         train_x, train_y = train_x.to(self.device), train_y.to(self.device)
@@ -533,11 +536,11 @@ class BotorchSampler:
         
         # "Loss" for GPs - the marginal log likelihood
         mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood=self.model.likelihood, model=self.model)
-        # Use the adam optimizer
-        optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
         
+        # fit_gpytorch_mll(mll, max_retries=1)
+        
+        #---------------------------------------------------------
         # stopping criteria
-        
         loss_tracker = StoppingTracker(
             # interval=stop_check_interval,
             window_size=5,
@@ -559,6 +562,9 @@ class BotorchSampler:
             threshold=1.005,
             direction="up"  # metric should increase
         )
+        
+        # Use the adam optimizer
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
         
         # train loop
         for i in range(self.max_iterations):
@@ -606,9 +612,10 @@ class BotorchSampler:
                 # logging.info(f'Iter {i}/{self.max_iterations} - Loss: {loss.item():.3f}, curvature: {curve:.3f}')
                 # logging.info(f'Iter {i}/{self.max_iterations} - Loss: {loss.item():.3f}, avg_degree: {degree:.3f}, curvature: {curve:.3f}')
                 
-            optimizer.step()
-            
+            optimizer.step()    
         #---- end train loop --------------------------------------------------
+        
+        
         self.reset() # self.num_fit_attempts = 0
         return True
     #--------------------------------------------------------------------------
@@ -652,7 +659,7 @@ class BotorchSampler:
         self.current_err = err = abs(current_y_val - regression_y_max)/regression_y_max
         
         logging.info('-'*80)
-        logging.info(f'[ROUND-{self.round+1}]\tSTATS\t{self.current_best_checkpoint}\t{current_y_val:.2f}\t{err:.4g}\t{self.sample_fraction:.4f}')
+        logging.info(f'[ROUND-{self.round+1}]\tSTATS\t{self.current_best_checkpoint}\t{current_y_val:.4f}\t{err:.4g}\t{self.sample_fraction:.4f}')
         logging.info(f'[ROUND-{self.round+1}]\tCURRENT BEST\tCHECKPOINT-{self.current_best_checkpoint}\tY_PRED={current_y_val:.4f}\tY_ERR={100*err:.4g}%\t({100*self.sample_fraction:.2f}% sampled)')
         
         self.y_pred = y_pred
