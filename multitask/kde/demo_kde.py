@@ -2,6 +2,14 @@ import numpy as np
 import matplotlib.pyplot as plt
 from boolean_kde import boolean_sample_kde, plot_kde_example, compare_bandwidths
 
+# get current directory
+import os
+current_dir = os.path.dirname(os.path.abspath(__file__))
+# Add the parent directory to the path
+import sys
+sys.path.append(os.path.dirname(current_dir))
+
+
 # Generate example data
 np.random.seed(42)
 X = np.sort(np.random.uniform(0, 10, 100))  # 100 points between 0 and 10
@@ -12,12 +20,12 @@ Y = np.random.binomial(1, underlying_density).astype(bool)
 
 # Plot with default bandwidth
 fig1 = plot_kde_example(X, Y, bandwidth=0.3)
-plt.savefig('kde_example.png')
+plt.savefig(os.path.join(current_dir, 'kde_example.png'))
 plt.close(fig1)
 
 # Compare different bandwidths
 fig2 = compare_bandwidths(X, Y, bandwidths=[0.1, 0.3, 0.5, 1.0])
-plt.savefig('bandwidth_comparison.png')
+plt.savefig(os.path.join(current_dir, 'bandwidth_comparison.png'))
 plt.close(fig2)
 
 print(f"Total points: {len(X)}")
@@ -51,5 +59,5 @@ ax.set_xlabel('X')
 ax.set_ylabel('Density')
 ax.legend()
 
-plt.savefig('gaussian_components.png')
+plt.savefig(os.path.join(current_dir, 'individual_gaussians.png'))
 plt.close(fig3)

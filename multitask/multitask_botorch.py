@@ -10,6 +10,7 @@ import gpytorch
 import logging
 from datetime import datetime
 import math
+from scipy.stats import gaussian_kde
 from math import ceil
 from glob import glob
 import shutil
@@ -39,7 +40,7 @@ fn = 'phi4-math-4claude.txt'
 
 # number of random obs-per-task (opt) to initially sample
 # if <1, then fraction of total obs
-init_obs    = 2
+init_obs    = 5
 # init_obs    = 0.05
 
 # stop BO sampling after this fraction of points are sampled
@@ -751,6 +752,23 @@ class BotorchSampler:
             
     #-------------------------------------------------------------------------
     
+    def sample_damper(self):
+        X = self.test_X
+        bw = 10.0/self.k
+        
+        K = np.zeros_like(self.sampled_mask, dtype=np.float64)
+        for j in range(K.shape[1]):
+            y = self.sampled_mask[:, j]
+            x, o = X[y], X[~y]
+            # compute kde from sampled points
+            kde = gaussian_kde(x, bw_method=bw)
+            # evaluate kde at unsampled points
+            v = kde(o)
+            # normalize kde, scale by number of sampled points
+            v = v * len(x) / np.sum(v)
+            K[~y, j] = v
+        return K
+    
     # compute expected improvement
     def expected_improvement(self, beta=0):
         S_mu = self.y_pred.sum(axis=-1)
@@ -798,6 +816,11 @@ class BotorchSampler:
         else: # normal EI
             ei = imp * norm.cdf(z) + sig * norm.pdf(z)
             ei = np.log(ei)
+            
+        # dampen highly sampled regions
+        SD = self.sample_damper()
+        sd = SD[valid_i, valid_j]
+        ei = ei * (1 + sd * 0.1)
 
         # Assign computed values to valid positions and return
         EI[mask] = ei
@@ -860,7 +883,6 @@ class BotorchSampler:
         
         # plot task (before sampling)
         self.plot_task(next_j, '(before)', acq_values.reshape(self.k, self.z)[:, next_j])
-        # self.plot_task(next_j, '(before)', acq_values_2.reshape(self.k, self.z)[:, next_j]) # debugging
         
         # add new sample to training set (observe) and update mask 
         self.train_X = torch.cat([self.train_X, torch.tensor([ [self.test_X[next_i], next_j] ], dtype=torch.float64)])
