@@ -40,7 +40,7 @@ fn = 'phi4-math-4claude.txt'
 
 # number of random obs-per-task (opt) to initially sample
 # if <1, then fraction of total obs
-init_obs    = 5
+init_obs    = 2
 # init_obs    = 0.05
 
 # stop BO sampling after this fraction of points are sampled
@@ -66,8 +66,9 @@ eta = 0.25
 eta_gamma = 0.9
 
 # logging intervals
-log_fit = 5
+log_fit = 25
 log_loop = 5
+verbosity = 1
 
 use_cuda = True
 
@@ -416,6 +417,7 @@ class BotorchSampler:
                  ucb_gamma=0.995,
                  log_interval=50,
                  max_retries=10,
+                 verbosity=1,
                  use_cuda=True,
                  run_dir=None):   
         self.sampled_mask = sampled_mask
@@ -452,6 +454,7 @@ class BotorchSampler:
         if run_dir is not None:
             plt.ioff()
         self.max_retries = max_retries
+        self.verbosity = verbosity
         self.round = 0
         self.reset()
         
@@ -543,17 +546,16 @@ class BotorchSampler:
         #---------------------------------------------------------
         # stopping criteria
         loss_tracker = StoppingTracker(
-            # interval=stop_check_interval,
+            name="loss",
+            mode="improvement",
+            threshold=0.0005,  # 0.1% improvement is considered significant
+            direction="down",  # loss should decrease
             optimizer=optimizer,
             lr_gamma=0.8,
             lr_steps=10,
             window_size=5,
             patience=patience,
             min_iterations=min_iterations,
-            name="loss",
-            mode="improvement",
-            threshold=0.0005,  # 0.1% improvement is considered significant
-            direction="down",  # loss should decrease
             logging=logging,
             prefix=f'[ROUND-{self.round+1}]'  # Add prefix to log messages
         )
@@ -752,25 +754,32 @@ class BotorchSampler:
             
     #-------------------------------------------------------------------------
     
-    def sample_damper(self):
-        X = self.test_X
-        bw = 10.0/self.k
+    def sample_damper(self, bw_mult=50.0, beta=0.5):
+        bw = bw_mult/self.k
+        if beta is not None and beta > 0:
+            bw *= beta
         
-        K = np.zeros_like(self.sampled_mask, dtype=np.float64)
+        X = self.test_X
+        K = np.ones_like(self.sampled_mask, dtype=np.float64) * np.nan
+        
         for j in range(K.shape[1]):
             y = self.sampled_mask[:, j]
+            # extract sampled and unsampled points
             x, o = X[y], X[~y]
             # compute kde from sampled points
             kde = gaussian_kde(x, bw_method=bw)
             # evaluate kde at unsampled points
             v = kde(o)
-            # normalize kde, scale by number of sampled points
-            v = v * len(x) / np.sum(v)
+            # normalize kde...
+            v = v/np.sum(v)
+            # and scale each task by number of sampled points in that task
+            v *= len(x)/K.shape[0]
+            # assign back to K
             K[~y, j] = v
         return K
     
     # compute expected improvement
-    def expected_improvement(self, beta=0):
+    def expected_improvement(self, beta=0.5, debug=True):
         S_mu = self.y_pred.sum(axis=-1)
         S_max_idx = np.argmax(S_mu)
         S_max = S_mu[S_max_idx]
@@ -817,14 +826,32 @@ class BotorchSampler:
             ei = imp * norm.cdf(z) + sig * norm.pdf(z)
             ei = np.log(ei)
             
-        # dampen highly sampled regions
-        SD = self.sample_damper()
+        # shift ei to be non-negative
+        ei_min = ei.min()
+        ei -= ei_min
+            
+        # # dampen highly sampled regions
+        SD = self.sample_damper(bw_mult=50.0, beta=beta)
         sd = SD[valid_i, valid_j]
-        ei = ei * (1 + sd * 0.1)
+        if debug:
+            ei0 = ei.copy()
+        ei *= (1 - sd**0.5)
+        
+        # inverse shift
+        ei += ei_min
 
         # Assign computed values to valid positions and return
         EI[mask] = ei
         k = np.argmax(EI)
+        
+        #-----------------------------------------------------------
+        # debugging
+        if debug:
+            next_j = j_indices[k]
+            EI[mask] = ei0
+            self.plot_task(next_j, 'ORIGINAL', EI.reshape(self.k, self.z)[:, next_j])
+            EI[mask] = ei
+        #------------------------------------------------------------
         return EI, EI[k], i_indices[k], j_indices[k]
     
     def ucb(self):
@@ -913,6 +940,7 @@ sampler = BotorchSampler(full_X, sampled_mask,
                          ucb_gamma=ucb_gamma,
                          max_iterations=max_iterations,
                          max_retries=max_retries,
+                         verbosity=verbosity,
                          max_sample=max_sample, 
                          rank_frac=rank_frac,
                          log_interval=log_fit,
