@@ -142,32 +142,18 @@ logging.basicConfig(
         logging.StreamHandler()  # This will print to console too
     ]
 )
+logging.info('-'*80)
+logging.info(f'Run directory: {run_dir}')
+logging.info(f'Random seed: {rand_seed}')
 
-def log(msg, verbosity_level=1,
-        level=logging.INFO):
-    if verbosity_level > verbosity:
-        return
-    if level == logging.DEBUG:
-        logging.debug(msg)
-    elif level == logging.INFO:
-        logging.info(msg)
-    elif level == logging.WARNING:
-        logging.warning(msg)
-    elif level == logging.ERROR:
-        logging.error(msg)
-    elif level == logging.CRITICAL:
-        logging.critical(msg)
-    else:
-        raise ValueError(f'Unknown log level: {level}')
-    
-def warn(msg, verbosity_level=1, level=logging.WARNING):
-    log(msg, verbosity_level=verbosity_level, level=level)
-    
-
-log('-'*80)
-log(f'Run directory: {run_dir}')
-log(f'Random seed: {rand_seed}')
-
+'''
+Usage:
+    logging.info('Info message')
+    logging.warning('Warning message')
+    logging.error('Error message')
+    logging.debug('Debug message')  # Only shows if level=logging.DEBUG
+    logging.exception('Exception message')  # Logs the stack trace
+'''
 #--------------------------------------------------------------------------
 # load data
 df = pd.read_csv(os.path.join(data_dir, fn), delimiter='\t')
@@ -191,7 +177,7 @@ if task_sample>0 and task_sample!=1:
     
 # ei_gamma
 ei_gamma = np.exp(np.log(ei_f) / (ei_t*K*Z - 2*Z))
-log('FYI: ei_gamma: %s', ei_gamma)
+logging.info('FYI: ei_gamma: %s', ei_gamma)
 
 #-------------------------------------------------------------------------
 
@@ -199,17 +185,17 @@ def init_samples(K, Z, init_obs):
     if init_obs >= 1:
         if init_obs < 2:
             init_obs = 2
-            log('FYI: increasing init_obs to 2 (minimum 2 obs/task allowed)')
+            logging.info('FYI: increasing init_obs to 2 (minimum 2 obs/task allowed)')
         m = ceil(init_obs * Z)
     else:
         min_frac = 2/K # == 2*Z/(K*Z)
         if init_obs < min_frac:
             m = 2*Z
-            log(f'FYI: increasing init_obs to {min_frac:.4g} (minimum 2 obs/task allowed)')
+            logging.info(f'FYI: increasing init_obs to {min_frac:.4g} (minimum 2 obs/task allowed)')
         else:
             m = max(2*Z, ceil(init_obs * K * Z))
-    log(f'FYI: initializing sampler with {m} observations ( ~{m/(K*Z):.4g} of all obs, ~{m/Z:.4g} obs/task )\n')
-    log('-'*80)
+    logging.info(f'FYI: initializing sampler with {m} observations ( ~{m/(K*Z):.4g} of all obs, ~{m/Z:.4g} obs/task )\n')
+    logging.info('-'*80)
     
     tasks = list(range(Z))
     checkpoints = list(range(K))
@@ -255,7 +241,7 @@ checkpoints = (checkpoint_nums - checkpoint_nums.min()) / (checkpoint_nums.max()
 best_idx = np.argmax(V.mean(axis=1))
 best_checkpoint = checkpoint_nums[best_idx]
 best_y_mean = V.mean(axis=1)[best_idx]
-# log(f'TRUE BEST CHECKPOINT:\t{best_checkpoint}\tY={best_y_mean:.4f}')
+# logging.info(f'TRUE BEST CHECKPOINT:\t{best_checkpoint}\tY={best_y_mean:.4f}')
 
 # subsample data
 x_idx, t_idx = init_samples(K, Z, init_obs)
@@ -327,7 +313,7 @@ def full_model(train_x, train_y, k, z, rank_frac, eta=None):
             metric_history.append(metric)
             
             # print degree and curve (debugging)
-            # log(f'Iter {i}/{max_iter} - Loss: {loss.item():.3f}, avg_degree: {degree:.3f}, curvature: {curve:.3f}')
+            # logging.info(f'Iter {i}/{max_iter} - Loss: {loss.item():.3f}, avg_degree: {degree:.3f}, curvature: {curve:.3f}')
             
             # Only check for early stopping after collecting enough data points
             if len(metric_history) >= window_size + 1 and i >= min_iterations//2:
@@ -338,13 +324,13 @@ def full_model(train_x, train_y, k, z, rank_frac, eta=None):
                 if current_avg > prev_avg * 1.004:  # Small threshold to avoid stopping due to tiny fluctuations
                     consecutive_rises += 1
                     if consecutive_rises >= rise_patience//2:
-                        log(f'FYI: Early stopping at iteration {i+1}: metric rising for {consecutive_rises} consecutive checks')
+                        logging.info(f'FYI: Early stopping at iteration {i+1}: metric rising for {consecutive_rises} consecutive checks')
                         break
                 else:
                     consecutive_rises = 0
                     
         if i % (log_fit//10) == 0:
-            log(f'ITER-{i}/{max_iter} - Loss: {loss.item():.3f}, metric: {metric:.3f}')
+            logging.info(f'ITER-{i}/{max_iter} - Loss: {loss.item():.3f}, metric: {metric:.3f}')
         #-------------------------------------------------------
         optimizer.step()
     #---- end train loop --------------------------------------------------
@@ -382,7 +368,7 @@ def full_model(train_x, train_y, k, z, rank_frac, eta=None):
     true_best_checkpoint = x_vals[j]
     # regression_err = err = abs(regression_y_max - true_y_max)/true_y_max
     
-    # log(f'REG BEST CHECKPOINT:\t{regression_best_checkpoint}\tY={regression_y_max:.4f}')
+    # logging.info(f'REG BEST CHECKPOINT:\t{regression_best_checkpoint}\tY={regression_y_max:.4f}')
     #------------------------------------------------------------------
     # plot GP regression
     # test_Y_mu = test_Y.mean(axis=1)
@@ -410,8 +396,8 @@ i = np.argmax(reference_y)
 regression_best_checkpoint = checkpoint_nums[i]
 regression_y_max = reference_y[i]
 
-log(f'TRU BEST CHECKPOINT:\t{best_checkpoint}\tY={best_y_mean:.4f}')
-log(f'REF BEST CHECKPOINT:\t{regression_best_checkpoint}\tY={regression_y_max:.4f}')
+logging.info(f'TRU BEST CHECKPOINT:\t{best_checkpoint}\tY={best_y_mean:.4f}')
+logging.info(f'REF BEST CHECKPOINT:\t{regression_best_checkpoint}\tY={regression_y_max:.4f}')
 
 #--------------------------------------------------------------------------
 
@@ -453,26 +439,22 @@ class BotorchSampler:
         self.eta_gamma = eta_gamma
         self.ei_beta = ei_beta
         self.ei_gamma = ei_gamma
-        self.ei_decay = 1.0
         self.ucb_lambda = ucb_lambda
         self.ucb_gamma = ucb_gamma
         self.log_interval = log_interval
-        self.verbosity = verbosity
-        
-        
-        
         self.device = torch.device("cuda" if torch.cuda.is_available() and use_cuda else "cpu")
         if use_cuda:
-            log(f'Using CUDA: {torch.cuda.is_available()}')
+            logging.info(f'Using CUDA: {torch.cuda.is_available()}')
         else:
-            log('Using CPU')
-        log(f'Using device: {self.device}')
+            logging.info('Using CPU')
+        logging.info(f'Using device: {self.device}')
         self.k, self.z = sampled_mask.shape
         self.full_x = full_x.to(self.device)
         self.run_dir = run_dir
         if run_dir is not None:
             plt.ioff()
         self.max_retries = max_retries
+        self.verbosity = verbosity
         self.round = 0
         self.reset()
         
@@ -492,8 +474,8 @@ class BotorchSampler:
                 return True
             else:
                 if i+1 < self.max_retries:
-                    warn('-'*80)
-                    warn(f'FAILED... ATTEMPT {i+2}')
+                    logging.warning('-'*80)
+                    logging.warning(f'FAILED... ATTEMPT {i+2}')
         raise Exception('ERROR: Failed to fit model - max_retries reached')
     
     # fit model inner loop
@@ -522,10 +504,10 @@ class BotorchSampler:
             if self.rank_frac > 0:
                 w = self.num_retries * (z-rank)//self.max_retries
                 rank = min(z, rank + w)
-                log(f'[ROUND-{self.round+1}]\tFYI: rank adjusted to {rank}')
+                logging.info(f'[ROUND-{self.round+1}]\tFYI: rank adjusted to {rank}')
             # eta adjustment... ??
             eta = eta * (self.eta_gamma ** max(0, self.num_retries - self.max_retries//2))
-            log(f'[ROUND-{self.round+1}]\tFYI: eta adjusted to {eta:.4g}')
+            logging.info(f'[ROUND-{self.round+1}]\tFYI: eta adjusted to {eta:.4g}')
             # patience, min_iterations adjustment...
             patience = max(5, patience - self.num_retries//2)
             min_iterations = max(50, min_iterations - 10*self.num_retries//2)
@@ -575,8 +557,18 @@ class BotorchSampler:
             patience=patience,
             min_iterations=min_iterations,
             logging=logging,
-            verbosity=self.verbosity,
             prefix=f'[ROUND-{self.round+1}]'  # Add prefix to log messages
+        )
+        
+        metric_tracker = StoppingTracker(
+            interval=stop_check_interval,
+            window_size=10,
+            patience=patience,
+            min_iterations=min_iterations,
+            name="metric",
+            mode="direction",
+            threshold=1.005,
+            direction="up"  # metric should increase
         )
         
         # train loop
@@ -594,13 +586,33 @@ class BotorchSampler:
             loss.backward()
             
             if loss_tracker.step(loss.item()):
-                # log(f'[ROUND-{self.round+1}]\tFYI: Early stopping at iteration {i+1}: loss stagnating')
+                # logging.info(f'[ROUND-{self.round+1}]\tFYI: Early stopping at iteration {i+1}: loss stagnating')
                 break
             
             #---------------------------------------------------------
+            # if i % stop_check_interval == 0:
+            #     if use_curvature:
+            #         metric = curvature_metric(self.model, self.full_x, verbose=False)
+            #     else:
+            #         metric = degree_metric(self.model, self.full_x)
+            #     metric_tracker.add_value(metric) 
+                
+            #     # Check either/both stopping criteria
+            #     stop1 = loss_tracker.should_stop()
+            #     stop2 = metric_tracker.should_stop()
+            #     stop = stop1 and stop2
+            #     if self.num_retries > self.max_retries//4:
+            #         stop = stop1 or stop2
+            #     if stop:
+            #         logging.info(f'[ROUND-{self.round+1}]\tFYI: Early stopping at iteration {i+1}: metric rising for {metric_tracker.consecutive_count} consecutive checks')
+            #         break    
+            #--------------------------------------------------------
       
             if i % self.log_interval == 0:
-                log(f'[ROUND-{self.round+1}]\tITER-{i}/{self.max_iterations} - Loss: {loss.item():.4g}')
+                logging.info(f'[ROUND-{self.round+1}]\tITER-{i}/{self.max_iterations} - Loss: {loss.item():.4g}')
+                # logging.info(f'[ROUND-{self.round+1}]\tITER-{i}/{self.max_iterations} - Loss: {loss.item():.3f}, metric: {metric:.3f}')
+                # logging.info(f'Iter {i}/{self.max_iterations} - Loss: {loss.item():.3f}, curvature: {curve:.3f}')
+                # logging.info(f'Iter {i}/{self.max_iterations} - Loss: {loss.item():.3f}, avg_degree: {degree:.3f}, curvature: {curve:.3f}')
                 
             optimizer.step() 
                 
@@ -649,9 +661,9 @@ class BotorchSampler:
         current_y_val = reference_y[i] # regression_y at peak_idx of y_mean estimate
         self.current_err = err = abs(current_y_val - regression_y_max)/regression_y_max
         
-        log('-'*80)
-        log(f'[ROUND-{self.round+1}]\tSTATS\t{self.current_best_checkpoint}\t{current_y_val:.4f}\t{err:.4g}\t{self.sample_fraction:.4f}')
-        log(f'[ROUND-{self.round+1}]\tCURRENT BEST\tCHECKPOINT-{self.current_best_checkpoint}\tY_PRED={current_y_val:.4f}\tY_ERR={100*err:.4g}%\t({100*self.sample_fraction:.2f}% sampled)')
+        logging.info('-'*80)
+        logging.info(f'[ROUND-{self.round+1}]\tSTATS\t{self.current_best_checkpoint}\t{current_y_val:.4f}\t{err:.4g}\t{self.sample_fraction:.4f}')
+        logging.info(f'[ROUND-{self.round+1}]\tCURRENT BEST\tCHECKPOINT-{self.current_best_checkpoint}\tY_PRED={current_y_val:.4f}\tY_ERR={100*err:.4g}%\t({100*self.sample_fraction:.2f}% sampled)')
         
         self.y_pred = y_pred
         self.y_mean = y_mean
@@ -742,16 +754,14 @@ class BotorchSampler:
             
     #-------------------------------------------------------------------------
     
-    # dampen the acquisition function in highly sampled regions
-    def sample_damper(self, decay=1.0, bw_mult=25.0):
-        # bandwidth for kde smoother
-        bw = bw_mult * decay / self.k
-        # x-axis possible sample locations
+    def sample_damper(self, bw_mult=50.0, beta=0.5):
+        bw = bw_mult/self.k
+        if beta is not None and beta > 0:
+            bw *= beta
+        
         X = self.test_X
-        # matrix to hold kde estimates
         K = np.ones_like(self.sampled_mask, dtype=np.float64) * np.nan
         
-        # for each task compute kde
         for j in range(K.shape[1]):
             y = self.sampled_mask[:, j]
             # extract sampled and unsampled points
@@ -769,7 +779,7 @@ class BotorchSampler:
         return K
     
     # compute expected improvement
-    def expected_improvement(self, beta=0.5, decay=1.0, debug=True):
+    def expected_improvement(self, beta=0.5, debug=True):
         S_mu = self.y_pred.sum(axis=-1)
         S_max_idx = np.argmax(S_mu)
         S_max = S_mu[S_max_idx]
@@ -816,17 +826,19 @@ class BotorchSampler:
             ei = imp * norm.cdf(z) + sig * norm.pdf(z)
             ei = np.log(ei)
             
-        # # dampen highly sampled regions
-        D = self.sample_damper(decay=decay)
-        d = D[valid_i, valid_j]
-        
-        if debug:
-            EI0 = EI.copy()
-            EI0[mask] = ei
-            
-        # shift (so non-negative) -> apply dampening -> unshift
+        # shift ei to be non-negative
         ei_min = ei.min()
-        ei = (ei-ei_min) * (1 - decay * d**0.5) + ei_min
+        ei -= ei_min
+            
+        # # dampen highly sampled regions
+        SD = self.sample_damper(bw_mult=50.0, beta=beta)
+        sd = SD[valid_i, valid_j]
+        if debug:
+            ei0 = ei.copy()
+        ei *= (1 - sd**0.5)
+        
+        # inverse shift
+        ei += ei_min
 
         # Assign computed values to valid positions and return
         EI[mask] = ei
@@ -835,9 +847,11 @@ class BotorchSampler:
         #-----------------------------------------------------------
         # debugging
         if debug:
-            self.plot_task(j_indices[k], 'ORIGINAL', EI0.reshape(self.k, self.z)[:, j_indices[k]])
+            next_j = j_indices[k]
+            EI[mask] = ei0
+            self.plot_task(next_j, 'ORIGINAL', EI.reshape(self.k, self.z)[:, next_j])
+            EI[mask] = ei
         #------------------------------------------------------------
-        
         return EI, EI[k], i_indices[k], j_indices[k]
     
     def ucb(self):
@@ -878,21 +892,21 @@ class BotorchSampler:
         # acquisition function
         if use_ei:
             # expected improvement
-            acq_values, max_val, next_i, next_j = self.expected_improvement(beta=self.ei_beta, decay=self.ei_decay)
-            self.ei_decay = self.ei_decay * self.ei_gamma
+            acq_values, max_val, next_i, next_j = self.expected_improvement(beta=self.ei_beta)
+            # acq_values_2, _ = self.expected_improvement(beta=0.5) # debugging
             self.ei_beta = self.ei_beta * self.ei_gamma
-            log(f'[ROUND-{self.round+1}]\tEI beta: {self.ei_beta:.4g}')
+            logging.info(f'[ROUND-{self.round+1}]\tEI beta: {self.ei_beta:.4g}')
         else:
             # upper confidence bound
             acq_values, max_val, next_i, next_j = self.ucb()
             self.ucb_lambda = self.ucb_lambda * self.ucb_gamma
-            log(f'[ROUND-{self.round+1}]\tUCB lambda: {self.ucb_lambda:.4g}')
+            logging.info(f'[ROUND-{self.round+1}]\tUCB lambda: {self.ucb_lambda:.4g}')
         
         # convert to original checkpoint numbers
         next_checkpoint = self.x_vals[next_i]
         
-        log(f'[ROUND-{self.round+1}]\tNEXT SAMPLE\tCHECKPOINT-{next_checkpoint}\tTASK-{next_j}\t(acq_fxn_max={max_val:.3g})')
-        log('='*80)
+        logging.info(f'[ROUND-{self.round+1}]\tNEXT SAMPLE\tCHECKPOINT-{next_checkpoint}\tTASK-{next_j}\t(acq_fxn_max={max_val:.3g})')
+        logging.info('='*80)
         
         # plot task (before sampling)
         self.plot_task(next_j, '(before)', acq_values.reshape(self.k, self.z)[:, next_j])
@@ -906,7 +920,7 @@ class BotorchSampler:
         task_counts = np.sum(self.sampled_mask, axis=0)
         max_task = np.argmax(task_counts)
         max_count = task_counts[max_task]
-        log(f'[ROUND-{self.round+1}]\tTASK-{max_task} has most samples: {max_count}')
+        logging.info(f'[ROUND-{self.round+1}]\tTASK-{max_task} has most samples: {max_count}')
         
         # return next sample
         return next_i, next_j

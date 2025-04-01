@@ -3,6 +3,7 @@ import numpy as np
 import gc
 import torch
 import math
+from functools import partial
 import gpytorch
 from crossing import count_line_curve_intersections
 import matplotlib.pyplot as plt
@@ -60,6 +61,7 @@ class StoppingTracker:
                  logging=None,
                  prefix=None,
                  burnin=None,
+                 verbosity=1,
                 ):
         """
         Initialize the early stopping tracker.
@@ -88,9 +90,10 @@ class StoppingTracker:
         self.optimizer = optimizer
         self.lr_gamma = lr_gamma
         self.lr_steps = lr_steps
-        self.pfunc = logging.info if logging is not None else print
         self.prefix = f'{prefix.strip()}\t' if prefix is not None else ''
         self.burnin = burnin if burnin is not None else window_size*2
+        self.verbosity = verbosity
+        self.pfunc = partial(self._print, printer=logging.info if logging is not None else print)
         
         # Validate and store parameters
         if mode not in ["direction", "improvement"]:
@@ -103,6 +106,14 @@ class StoppingTracker:
         self.history = []
         self.consecutive_count = 0
         self.lr_step = 0
+        self.message_log = []
+        
+    def _print(self, msg, verbosity_level=0, printer=print):
+        """ Print message if verbosity level is sufficient. """
+        if self.verbosity >= verbosity_level:
+            printer(msg)
+        else:
+            self.message_log.append(msg)
     
     def step(self, value):
         """ Add a new value to the history.
@@ -161,7 +172,7 @@ class StoppingTracker:
             if self.consecutive_count >= self.patience:
                 # return True
                 if self.iteration >= self.min_iterations:
-                    self.pfunc(f"{self.prefix}Check failed: {self.name} stagnating for {self.patience} iterations.")
+                    self.pfunc(f"{self.prefix}Check failed: {self.name} stagnating for {self.patience} iterations.", 2)
                     return True
                 return False
         else:
@@ -171,11 +182,11 @@ class StoppingTracker:
         if self.mode == "improvement" and self.iteration >= self.min_iterations:
             if self.direction == "up":
                 if current_avg < prev_avg:
-                    self.pfunc(f"{self.prefix}Check failed: {self.name} is not going up consistently.")
+                    self.pfunc(f"{self.prefix}Check failed: {self.name} is not going up consistently.", 2)
                     return True
             else:
                 if current_avg > prev_avg:
-                    self.pfunc(f"{self.prefix}Check failed: {self.name} is not going down consistently.")
+                    self.pfunc(f"{self.prefix}Check failed: {self.name} is not going down consistently.", 2)
                     return True
         return False
     
@@ -183,7 +194,8 @@ class StoppingTracker:
         """Check if early stopping criteria are met and adjust learning rate if needed."""
         if self.should_stop():
             if self.optimizer is None or self.lr_step==self.lr_steps:
-                self.pfunc(f"{self.prefix}Stopping early.")
+                last_msg = self.message_log[-1] if self.message_log else ""
+                self.pfunc(f"{self.prefix}STOPPING : {last_msg}", 1)
                 return True
             self.reduce_lr()
         return False
@@ -196,7 +208,7 @@ class StoppingTracker:
         for param_group in self.optimizer.param_groups:
             param_group['lr'] *= self.lr_gamma
             lr = param_group['lr']
-        self.pfunc(f"{self.prefix}Reduced learning rate to {lr:.4f}")
+        self.pfunc(f"{self.prefix}Reduced learning rate to {lr:.4f}", 2)
         self.consecutive_count = 0
         if self.iteration >= self.min_iterations:
             self.min_iterations = self.iteration + self.burnin
