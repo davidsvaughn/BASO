@@ -48,17 +48,12 @@ max_sample = 0.06
 
 # MLE estimation
 learning_rate = 0.1
+min_iterations = 100
 max_iterations = 1000
 max_retries = 20
 
-# metric stopping criteria
-use_curvature = True
-stop_check_interval = 5  # Check degree every n iterations
-window_size = 3  # Size of moving average window
-min_iterations = 100  # Minimum iterations before allowing early stopping
-rise_patience = 10  # Number of consecutive rises to trigger stopping
+use_cuda = True
 
-# rank_frac = 0.5 # 0.25
 rank_frac = 0.25
 
 # lkj prior
@@ -66,11 +61,9 @@ eta = 0.25
 eta_gamma = 0.9
 
 # logging intervals
-log_fit = 25
-log_loop = 5
+log_interval = 25
 verbosity = 1
 
-use_cuda = True
 
 # Expected Improvement parameters
 use_ei = True
@@ -275,15 +268,22 @@ test_X = np.array(checkpoints)
 test_Y = np.array(V)
 
 #--------------------------------------------------------------------------
-# Full Data Regression Model
-
-def full_model(train_x, train_y, k, z, rank_frac, eta=None):
-    # k = test_x.shape[0]
-    # z = train_y.reshape([k, -1]).shape[-1]
-    train_y, (t_mu, t_sig) = task_standardize(train_y, train_x)
-    rank = int(rank_frac * z) if rank_frac > 0 else None
-    
+# fit full regression model to all data for gold standard
+# (this is the regression model we are trying to approximate)
+def fit_mll_model(train_x, train_y, k, z,
+                  rank_frac=0.5, 
+                  learning_rate=0.1,
+                  max_iterations=1000,
+                  min_iterations=100,
+                  window_size=5,
+                  patience=10,
+                  eta=None, # 1.0
+                  ):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    
+    train_y, (t_mu, t_sig) = task_standardize(train_y, train_x)
+    
+    rank = int(rank_frac * z) if rank_frac > 0 else None
     if eta is None:
         task_covar_prior = None
     else:
@@ -308,103 +308,59 @@ def full_model(train_x, train_y, k, z, rank_frac, eta=None):
     # Use the adam optimizer
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
     
-    metric_history = []
-    consecutive_rises = 0
+    #---------------------------------------------------------
+    # stopping criteria
+    loss_tracker = StoppingTracker(
+        name="loss",
+        mode="improvement",
+        threshold=0.0005,  # 0.1% improvement is considered significant
+        direction="down",  # loss should decrease
+        lr_gamma=0.8,
+        lr_steps=10,
+        optimizer=optimizer,
+        window_size=window_size,
+        patience=patience,
+        min_iterations=min_iterations,
+        logging=logging,
+        verbosity=1,
+        prefix=f'[FULL-MODEL]'
+    )
     
-    max_iter = max_iterations//2
-    
-    for i in range(max_iter):
+    #----------------------------------------------------------
+    # train loop
+    for _ in range(max_iterations):
         optimizer.zero_grad()
         output = model(train_x)
         loss = -mll(output, model.train_targets)
         loss.backward()
-        #-------------------------------------------------------
-        if i % (stop_check_interval//2) == 0:
-            if use_curvature:
-                metric = curvature_metric(model, train_x, verbose=False)
-            else:
-                metric = degree_metric(model, train_x)
-            metric_history.append(metric)
-            
-            # print degree and curve (debugging)
-            # log(f'Iter {i}/{max_iter} - Loss: {loss.item():.3f}, avg_degree: {degree:.3f}, curvature: {curve:.3f}')
-            
-            # Only check for early stopping after collecting enough data points
-            if len(metric_history) >= window_size + 1 and i >= min_iterations//2:
-                # Calculate current and previous moving averages
-                current_avg = sum(metric_history[-window_size:]) / window_size
-                prev_avg = sum(metric_history[-(window_size+1):-1]) / window_size
-                # Check if the moving average is rising
-                if current_avg > prev_avg * 1.004:  # Small threshold to avoid stopping due to tiny fluctuations
-                    consecutive_rises += 1
-                    if consecutive_rises >= rise_patience//2:
-                        log(f'FYI: Early stopping at iteration {i+1}: metric rising for {consecutive_rises} consecutive checks')
-                        break
-                else:
-                    consecutive_rises = 0
-                    
-        if i % (log_fit//10) == 0:
-            log(f'ITER-{i}/{max_iter} - Loss: {loss.item():.3f}, metric: {metric:.3f}')
-        #-------------------------------------------------------
+        if loss_tracker.step(loss.item()):
+                break
         optimizer.step()
-    #---- end train loop --------------------------------------------------
+    #--------------------------------------------------------
+    
+    # set the model, likelihood to eval mode and predict
     model.eval()
     model.likelihood.eval()
     with torch.no_grad(), gpytorch.settings.fast_pred_var():
         predictions = model.likelihood(model(train_x))
         
-    #----------------------------------------------------------------------
     y_mean = predictions.mean
-    y_var = predictions.variance
-    y_covar = predictions.covariance_matrix
-    
-    # reshape
     y_pred = to_numpy(y_mean.reshape(k, z))
-    y_var = to_numpy(y_var.reshape(k, z))
-    y_covar = to_numpy(y_covar.reshape((k, z, k, z)))
-    
-    # inverse standardize...
     y_pred = y_pred * t_sig + t_mu
-    y_var = y_var * t_sig**2
-    y_sig = np.sqrt(y_var)
     y_mean = y_pred.mean(axis=1)
-    y_covar = y_covar * t_sig**2
-    y_sigma = np.array([np.sqrt(y_covar[i,:,i].sum()) for i in range(k)]) / z
-    
-    # current max estimate
-    i = np.argmax(y_mean)
-    regression_y_max = y_mean[i] # current y_mean estimate at peak_idx of y_mean estimate
-    j = np.argmax(V.mean(axis=1))
-    # true_y_max = V.mean(axis=1)[j]
-    
-    x_vals = checkpoint_nums
-    regression_best_checkpoint = x_vals[i]
-    true_best_checkpoint = x_vals[j]
-    # regression_err = err = abs(regression_y_max - true_y_max)/true_y_max
-    
-    # log(f'REG BEST CHECKPOINT:\t{regression_best_checkpoint}\tY={regression_y_max:.4f}')
-    #------------------------------------------------------------------
-    # plot GP regression
-    # test_Y_mu = test_Y.mean(axis=1)
-    # plt.figure(figsize=(15, 10))
-    # plt.plot(x_vals, y_mean, 'b')
-    # plt.fill_between(x_vals, y_mean - 2*y_sigma, y_mean + 2*y_sigma, alpha=0.5)
-    # plt.plot(x_vals, test_Y_mu, 'r')
-    # plt.legend(['Posterior Mean', 'Confidence', 'True Mean'])
-    # plt.title(f'Full Regression Model - Rank: {rank} - Regression Best Checkpoint: {regression_best_checkpoint}')
-    # # draw vertical line at regression best checkpoint
-    # plt.axvline(x=regression_best_checkpoint, color='g', linestyle='--', label='Regression Best Checkpoint')
-    # plt.axvline(x=true_best_checkpoint, color='m', linestyle='--', label='True Best Checkpoint')
-    # display_fig(run_dir)
-    #-------------------------------------------------------------------
-    # return regression_best_checkpoint, regression_y_max, y_mean
     return y_mean
+
 #--------------------------------------------------------------------------
-# fit full regression model to all data
-# reference_y = full_model(full_X, full_Y, K, Z, rank_frac=0.5)#, eta=1.0)
 
 # shortcut
 reference_y = V.mean(axis=1)
+
+# fit full regression model to all data
+reference_y = fit_mll_model(full_X, full_Y, K, Z, rank_frac=0.5,
+                            learning_rate=learning_rate,
+                            max_iterations=max_iterations,
+                            min_iterations=min_iterations,
+                            )
 
 i = np.argmax(reference_y)
 regression_best_checkpoint = checkpoint_nums[i]
@@ -592,17 +548,12 @@ class BotorchSampler:
                     logging.error(f'error in loss calculation at iteration {i}:\n{e}')
                 return False
             loss.backward()
-            
             if loss_tracker.step(loss.item()):
-                # log(f'[ROUND-{self.round+1}]\tFYI: Early stopping at iteration {i+1}: loss stagnating')
                 break
-            
-            #---------------------------------------------------------
-      
+            optimizer.step()
             if i % self.log_interval == 0:
                 log(f'[ROUND-{self.round+1}]\tITER-{i}/{self.max_iterations} - Loss: {loss.item():.4g}')
-                
-            optimizer.step() 
+                 
                 
         #---- end train loop --------------------------------------------------
         
@@ -716,10 +667,6 @@ class BotorchSampler:
             ax2.set_ylabel('Acquisition Function Value', color='g')
             ax2.tick_params(axis='y', labelcolor='g')
             
-            # # Legend for both axes
-            # lines1, labels1 = ax1.get_legend_handles_labels()
-            # lines2, labels2 = ax2.get_legend_handles_labels()
-            
             # Create custom legend with all elements
             ax1.legend(
                 ['Unobserved', 'Observed', 'Posterior Mean', 'Confidence', 'AcqFxn'],
@@ -773,18 +720,6 @@ class BotorchSampler:
         S_mu = self.y_pred.sum(axis=-1)
         S_max_idx = np.argmax(S_mu)
         S_max = S_mu[S_max_idx]
-        
-        #----------------------------------------------------------
-        # EXPERIMENTAL!!!
-        # transform = ScalarizedPosteriorTransform(weights=torch.ones(self.z, dtype=torch.float64))
-        # LogEI = LogExpectedImprovement(self.model, best_f=S_max, posterior_transform=transform)
-        # # t1 = self.model(self.full_x)
-        # # t2 = transform(t1)
-        # # a = LogEI(t2)
-        # ac_values = LogEI(self.full_x.unsqueeze(-2))
-        # # ac_values = LogEI(self.model.posterior(self.full_x))
-        # # ac_values = ac_values.mean.squeeze(-1).cpu().numpy()
-        #----------------------------------------------------------
         
         # get unsampled indices
         i_indices, j_indices = np.where(np.ones_like(self.sampled_mask))
@@ -929,7 +864,7 @@ sampler = BotorchSampler(full_X, sampled_mask,
                          verbosity=verbosity,
                          max_sample=max_sample, 
                          rank_frac=rank_frac,
-                         log_interval=log_fit,
+                         log_interval=log_interval,
                          use_cuda=use_cuda,
                          run_dir=run_dir)
 
