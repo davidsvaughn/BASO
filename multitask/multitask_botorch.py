@@ -328,16 +328,18 @@ def fit_mll_model(train_x, train_y, k, z,
     
     #----------------------------------------------------------
     # train loop
-    for _ in range(max_iterations):
+    for i in range(max_iterations):
         optimizer.zero_grad()
         output = model(train_x)
         loss = -mll(output, model.train_targets)
         loss.backward()
         if loss_tracker.step(loss.item()):
-                break
+            break
         optimizer.step()
+        if i % log_interval == 0:
+            log(f'[FULL-MODEL]\tITER-{i}/{max_iterations} - Loss: {loss.item():.4g}')
+            
     #--------------------------------------------------------
-    
     # set the model, likelihood to eval mode and predict
     model.eval()
     model.likelihood.eval()
@@ -351,9 +353,9 @@ def fit_mll_model(train_x, train_y, k, z,
     return y_mean
 
 #--------------------------------------------------------------------------
+# Train regression model on all data for gold standard
 
-# shortcut
-reference_y = V.mean(axis=1)
+# reference_y = V.mean(axis=1) # shortcut
 
 # fit full regression model to all data
 reference_y = fit_mll_model(full_X, full_Y, K, Z, rank_frac=0.5,
@@ -365,7 +367,6 @@ reference_y = fit_mll_model(full_X, full_Y, K, Z, rank_frac=0.5,
 i = np.argmax(reference_y)
 regression_best_checkpoint = checkpoint_nums[i]
 regression_y_max = reference_y[i]
-
 log(f'TRU BEST CHECKPOINT:\t{best_checkpoint}\tY={best_y_mean:.4f}')
 log(f'REF BEST CHECKPOINT:\t{regression_best_checkpoint}\tY={regression_y_max:.4f}')
 
@@ -535,6 +536,7 @@ class BotorchSampler:
             prefix=f'[ROUND-{self.round+1}]'  # Add prefix to log messages
         )
         
+        #---------------------------------------------------------
         # train loop
         for i in range(self.max_iterations):
             optimizer.zero_grad()
@@ -552,13 +554,10 @@ class BotorchSampler:
                 break
             optimizer.step()
             if i % self.log_interval == 0:
-                log(f'[ROUND-{self.round+1}]\tITER-{i}/{self.max_iterations} - Loss: {loss.item():.4g}')
-                 
-                
+                log(f'[ROUND-{self.round+1}]\tITER-{i}/{self.max_iterations} - Loss: {loss.item():.4g}')     
         #---- end train loop --------------------------------------------------
         
-        
-        self.reset() # self.num_retries = 0
+        self.reset()
         return True
     #--------------------------------------------------------------------------
             
@@ -775,35 +774,6 @@ class BotorchSampler:
         
         return EI, EI[k], i_indices[k], j_indices[k]
     
-    def ucb(self):
-        S_mu = self.y_pred.sum(axis=-1)
-        # S_max_idx = np.argmax(S_mu)
-        # S_max = S_mu[S_max_idx]
-        
-        # get unsampled indices
-        i_indices, j_indices = np.where(np.ones_like(self.sampled_mask))
-        mask = (~self.sampled_mask).reshape(-1)
-        # Initialize EI array with -inf for invalid entries
-        UCB = np.full(len(mask), -math.inf)
-        # Vectorized computation of all EI components
-        valid_i, valid_j = i_indices[mask], j_indices[mask]
-        
-        mu = self.y_pred[valid_i, valid_j]
-        sig = self.y_sig[valid_i, valid_j]
-
-        # Get row sums for each valid i (sum[mu] over all tasks for each checkpoint)
-        row_sums = np.sum(self.y_pred[valid_i, :], axis=1)
-        row_means = np.mean(self.y_pred[valid_i, :], axis=1)
-        
-        row_vals = row_sums
-        # row_vals = row_means
-        
-        ucb = row_vals + self.ucb_lambda * sig
-        
-        # Assign computed values to valid positions and return
-        UCB[mask] = ucb
-        k = np.argmax(UCB)
-        return UCB, UCB[k], i_indices[k], j_indices[k]
     #----------------------------------------------------------------------
     
     
@@ -811,17 +781,12 @@ class BotorchSampler:
     def sample_next(self):
        
         # acquisition function
-        if use_ei:
-            # expected improvement
-            acq_values, max_val, next_i, next_j = self.expected_improvement(beta=self.ei_beta, decay=self.ei_decay)
-            self.ei_decay = self.ei_decay * self.ei_gamma
-            self.ei_beta = self.ei_beta * self.ei_gamma
-            log(f'[ROUND-{self.round+1}]\tEI beta: {self.ei_beta:.4g}')
-        else:
-            # upper confidence bound
-            acq_values, max_val, next_i, next_j = self.ucb()
-            self.ucb_lambda = self.ucb_lambda * self.ucb_gamma
-            log(f'[ROUND-{self.round+1}]\tUCB lambda: {self.ucb_lambda:.4g}')
+        # if use_ei:
+        # Expected Improvement
+        acq_values, max_val, next_i, next_j = self.expected_improvement(beta=self.ei_beta, decay=self.ei_decay)
+        self.ei_decay = self.ei_decay * self.ei_gamma
+        self.ei_beta = self.ei_beta * self.ei_gamma
+        log(f'[ROUND-{self.round+1}]\tEI beta: {self.ei_beta:.4g}')
         
         # convert to original checkpoint numbers
         next_checkpoint = self.x_vals[next_i]
@@ -847,8 +812,7 @@ class BotorchSampler:
         return next_i, next_j
 
 #--------------------------------------------------------------------------
-# Fit model
-
+# Initialize the sampler
 sampler = BotorchSampler(full_X, sampled_mask,
                          train_X=train_X, train_Y=train_Y, 
                          test_X=checkpoint_nums, test_Y=test_Y,
@@ -868,12 +832,13 @@ sampler = BotorchSampler(full_X, sampled_mask,
                          use_cuda=use_cuda,
                          run_dir=run_dir)
 
-#--------------------------------------------------------------------------
 
+# Fit model to initial samples
 sampler.fit()
 sampler.predict()
 # sampler.plot_all(max_fig=10)
 
+# Run Bayesian optimization loop
 while sampler.sample_fraction < max_sample:
     _, next_task = sampler.sample_next()
     sampler.fit()
