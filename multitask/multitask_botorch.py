@@ -67,7 +67,7 @@ ei_f, ei_t = 0.2, 0.05
 # ei_gamma = 0.9925
 
 # logging intervals
-log_interval = 25
+log_interval = 5
 verbosity = 1
 
 # compare_random = False
@@ -338,12 +338,12 @@ test_Y = np.array(V)
 #--------------------------------------------------------------------------
 # Train regression model on all data for gold standard
 
-reference_y = fit_mll_model(full_X, full_Y, K, Z, rank_frac=0.5,
-                            learning_rate=learning_rate,
-                            max_iterations=max_iterations,
-                            min_iterations=min_iterations,
-                            )
-# reference_y = V.mean(axis=1) # shortcut
+# reference_y = fit_mll_model(full_X, full_Y, K, Z, rank_frac=0.5,
+#                             learning_rate=learning_rate,
+#                             max_iterations=max_iterations,
+#                             min_iterations=min_iterations,
+#                             )
+reference_y = V.mean(axis=1) # shortcut
 
 i = np.argmax(reference_y)
 regression_best_checkpoint = checkpoint_nums[i]
