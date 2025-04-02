@@ -172,7 +172,10 @@ class StoppingTracker:
             if self.consecutive_count >= self.patience:
                 # return True
                 if self.iteration >= self.min_iterations:
-                    self.pfunc(f"{self.prefix}Check failed: {self.name} stagnating for {self.patience} iterations.", 2)
+                    if self.mode == "improvement":
+                        self.pfunc(f"{self.prefix}Check failed: {self.name} stagnating for {self.patience} iterations.", 2)
+                    else: # mode == "direction"
+                        self.pfunc(f"{self.prefix}Check succeeded: {self.name} going {self.direction} for {self.patience} iterations.", 2)
                     return True
                 return False
         else:

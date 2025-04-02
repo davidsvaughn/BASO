@@ -19,7 +19,7 @@ import traceback
 from botorch.models import MultiTaskGP
 from gpytorch.priors import LKJCovariancePrior, SmoothedBoxPrior
 
-from utils import task_standardize, display_fig, StoppingTracker
+from utils import task_standardize, display_fig, StoppingTracker, curvature_metric
 from utils import to_numpy, log_h, clear_cuda_tensors
 
 # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -31,7 +31,10 @@ rank_frac = -1
 # SET PARAMETERS
 
 fn = 'phi4-math-4claude.txt'
-fn = 'phi4-bw-4claude.txt'
+# fn = 'phi4-bw-4claude.txt'
+
+# select random subset of tasks
+task_sample = 0.5
 
 # rand_seed = 2951
 
@@ -41,7 +44,7 @@ init_obs    = 2
 # init_obs    = 0.05
 
 # stop BO sampling after this fraction of points are sampled
-max_sample = 0.06
+max_sample = 0.08
 
 # MLE estimation
 learning_rate = 0.1
@@ -66,9 +69,6 @@ ei_f, ei_t = 0.2, 0.05
 # logging intervals
 log_interval = 25
 verbosity = 1
-
-# select random subset of tasks
-task_sample = 1
 
 # compare_random = False
 # synthetic = False
@@ -173,7 +173,7 @@ if task_sample>0 and task_sample!=1:
     
 # compute ei_gamma
 ei_gamma = np.exp(np.log(ei_f) / (ei_t*K*Z - 2*Z))
-log('FYI: ei_gamma: %s', ei_gamma)
+log(f'FYI: ei_gamma: {ei_gamma:.4g}')
 
 #-------------------------------------------------------------------------
 
@@ -458,6 +458,7 @@ class BotorchSampler:
             # eta adjustment... ??
             eta = eta * (self.eta_gamma ** max(0, self.num_retries - self.max_retries//2))
             log(f'[ROUND-{self.round+1}]\tFYI: eta adjusted to {eta:.4g}')
+            
             # patience, min_iterations adjustment...
             patience = max(5, patience - self.num_retries//2)
             min_iterations = max(50, min_iterations - 10*self.num_retries//2)
@@ -495,6 +496,7 @@ class BotorchSampler:
         
         #---------------------------------------------------------
         # stopping criteria
+        
         loss_tracker = StoppingTracker(
             name="loss",
             mode="improvement",
@@ -511,6 +513,20 @@ class BotorchSampler:
             prefix=f'[ROUND-{self.round+1}]'  # Add prefix to log messages
         )
         
+        curve_tracker = StoppingTracker(
+            name="curvature",
+            mode="direction",
+            threshold=1.005,
+            direction="up",
+            interval=5,
+            window_size=5,
+            patience=patience,
+            min_iterations=min_iterations,
+            logging=logging,
+            verbosity=self.verbosity,
+            prefix=f'[ROUND-{self.round+1}]',
+        )
+        
         #---------------------------------------------------------
         # train loop
         for i in range(self.max_iterations):
@@ -525,11 +541,20 @@ class BotorchSampler:
                     logging.error(f'error in loss calculation at iteration {i}:\n{e}')
                 return False
             loss.backward()
+            
             if loss_tracker.step(loss.item()):
                 break
+            
+            if i % curve_tracker.interval == 0 and self.num_retries > 0:
+                curvature = curvature_metric(self.model, self.full_x, verbose=False)
+                if curve_tracker.step(curvature):
+                    break
+            
             optimizer.step()
             if i % self.log_interval == 0:
-                log(f'[ROUND-{self.round+1}]\tITER-{i}/{self.max_iterations} - Loss: {loss.item():.4g}')     
+                try: log(f'[ROUND-{self.round+1}]\tITER-{i}/{self.max_iterations} - Loss: {loss.item():.4g}\tCurvature: {curvature:.4g}')
+                except: log(f'[ROUND-{self.round+1}]\tITER-{i}/{self.max_iterations} - Loss: {loss.item():.4g}')    
+                     
         #---- end train loop --------------------------------------------------
         
         self.reset()
