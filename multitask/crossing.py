@@ -68,6 +68,7 @@ def count_line_curve_intersections(x_values, y_values, num_trials=100):
 
 import numpy as np
 import random
+import torch
 
 def count_line_curve_intersections_vectorized(x_values, y_values, num_trials=500):
     """
@@ -92,6 +93,11 @@ def count_line_curve_intersections_vectorized(x_values, y_values, num_trials=500
         max_intersections: maximum number of intersections found
     """
     # Convert inputs to NumPy arrays
+    # if CUDA arrays, convert to cpu...
+    if isinstance(x_values, torch.Tensor):
+        x_values = x_values.cpu().numpy()
+    if isinstance(y_values, torch.Tensor):
+        y_values = y_values.cpu().numpy()
     x_values = np.asarray(x_values, dtype=float)
     y_values = np.asarray(y_values, dtype=float)
     n_points = len(x_values)

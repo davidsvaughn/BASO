@@ -444,8 +444,8 @@ class BotorchSampler:
         
         # setup parameters
         eta = self.eta
-        patience=10
-        min_iterations=100
+        patience=5
+        min_iterations=50
         
         #---------------------------------------------------------------------
         # if fit is failing...
@@ -497,36 +497,6 @@ class BotorchSampler:
         #---------------------------------------------------------
         # stopping criteria
         
-        loss_tracker = StoppingTracker(
-            name="loss",
-            mode="improvement",
-            threshold=0.0005,  # 0.1% improvement is considered significant
-            direction="down",  # loss should decrease
-            optimizer=optimizer,
-            lr_gamma=0.8,
-            lr_steps=10,
-            window_size=5,
-            patience=patience,
-            min_iterations=min_iterations,
-            logging=logging,
-            verbosity=self.verbosity,
-            prefix=f'[ROUND-{self.round+1}]'  # Add prefix to log messages
-        )
-        
-        curve_tracker = StoppingTracker(
-            name="curvature",
-            mode="direction",
-            threshold=1.005,
-            direction="up",
-            interval=5,
-            window_size=5,
-            patience=patience,
-            min_iterations=min_iterations,
-            logging=logging,
-            verbosity=self.verbosity,
-            prefix=f'[ROUND-{self.round+1}]',
-        )
-        
         degree_tracker = StoppingTracker(
             name="degree",
             mode="direction",
@@ -540,6 +510,36 @@ class BotorchSampler:
             verbosity=self.verbosity,
             prefix=f'[ROUND-{self.round+1}]',
         )
+        
+        # loss_tracker = StoppingTracker(
+        #     name="loss",
+        #     mode="improvement",
+        #     threshold=0.0005,  # 0.1% improvement is considered significant
+        #     direction="down",  # loss should decrease
+        #     optimizer=optimizer,
+        #     lr_gamma=0.8,
+        #     lr_steps=10,
+        #     window_size=5,
+        #     patience=patience,
+        #     min_iterations=min_iterations,
+        #     logging=logging,
+        #     verbosity=self.verbosity,
+        #     prefix=f'[ROUND-{self.round+1}]'  # Add prefix to log messages
+        # )
+        
+        # curve_tracker = StoppingTracker(
+        #     name="curvature",
+        #     mode="direction",
+        #     threshold=1.005,
+        #     direction="up",
+        #     interval=5,
+        #     window_size=5,
+        #     patience=patience,
+        #     min_iterations=min_iterations,
+        #     logging=logging,
+        #     verbosity=self.verbosity,
+        #     prefix=f'[ROUND-{self.round+1}]',
+        # )
         
         #---------------------------------------------------------
         # train loop
@@ -561,6 +561,8 @@ class BotorchSampler:
             if i % degree_tracker.interval == 0: #and self.num_retries > 0:
                 avg_degree, max_degree, mean_degree = degree_metric(self.model, self.full_x, z=self.z, verbose=False)
                 if degree_tracker.step(avg_degree):
+                    break
+                if i>min_iterations and (mean_degree>3 or max_degree>4):
                     break
             
             # if i % curve_tracker.interval == 0: # and self.num_retries > 0:
