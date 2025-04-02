@@ -36,7 +36,7 @@ rank_frac = -1
 # SET PARAMETERS
 
 fn = 'phi4-math-4claude.txt'
-fn = 'phi4-bw-4claude.txt'
+# fn = 'phi4-bw-4claude.txt'
 
 # select random subset of tasks
 task_sample = 1.0
@@ -245,7 +245,7 @@ def fit_mll_model(train_x, train_y, k, z,
         output = model(train_x)
         loss = -mll(output, model.train_targets)
         loss.backward()
-        if loss_tracker.step(loss.item()):
+        if loss_tracker.eval(loss.item()):
             break
         optimizer.step()
         if i % log_interval == 0:
@@ -286,12 +286,12 @@ test_Y = np.array(V)
 #--------------------------------------------------------------------------
 # Train regression model on all data for gold standard
 
-# reference_y = fit_mll_model(full_X, full_Y, K, Z, rank_frac=0.5,
-#                             learning_rate=learning_rate,
-#                             max_iterations=max_iterations,
-#                             min_iterations=min_iterations,
-#                             )
-reference_y = V.mean(axis=1) # shortcut
+reference_y = fit_mll_model(full_X, full_Y, K, Z, rank_frac=0.5,
+                            learning_rate=learning_rate,
+                            max_iterations=max_iterations,
+                            min_iterations=min_iterations,
+                            )
+# reference_y = V.mean(axis=1) # shortcut
 
 i = np.argmax(reference_y)
 regression_best_checkpoint = checkpoint_nums[i]
