@@ -246,7 +246,12 @@ class StoppingTracker:
 #--------------------------------------------------------------------------
 
 # degree metric
-def degree_metric(model, X, z=None, num_trials=500, verbose=False):
+def degree_metric(model, X, 
+                  z=None, 
+                  num_trials=500, 
+                  mean_max=None,
+                  max_max=None,
+                  verbose=False):
     if z is None:
         z = int(X[:,1].max().item() + 1)
     model.eval()
@@ -257,17 +262,31 @@ def degree_metric(model, X, z=None, num_trials=500, verbose=False):
     model.train()
     model.likelihood.train()
     
+    avg_degree, max_degree, mean_degree = -1,-1,-1
+    
+    # degree of mean regression line
+    x = to_numpy(X[X[:,1]==0][:,0])
+    mean_degree = count_line_curve_intersections_vectorized(x, mean.mean(axis=1), num_trials=num_trials)
+    if mean_max is not None:
+        if mean_degree > mean_max:
+            # mean_degree exceeds mean_max, so stop
+            return avg_degree, max_degree, mean_degree
+    
     degrees = []
     for i in range(z):
         y = to_numpy(mean[:, i])
-        x = to_numpy(X[X[:,1]==i][:,0])
+        # x = to_numpy(X[X[:,1]==i][:,0])
         d = count_line_curve_intersections_vectorized(x, y, num_trials=num_trials)
         # plt.plot(x, y)
         # plt.show()
         degrees.append(d)
+        max_degree = np.max(degrees)
+        if max_max is not None:
+            if max_degree > max_max:
+                # max_degree exceeds max_max, so stop
+                return avg_degree, max_degree, mean_degree
+            
     avg_degree = np.mean(degrees)
-    max_degree = np.max(degrees)
-    mean_degree = count_line_curve_intersections_vectorized(x, mean.mean(axis=1), num_trials=num_trials)
     # show histogram
     if verbose:
         print(f'Average degree: {avg_degree}')

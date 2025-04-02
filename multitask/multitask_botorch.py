@@ -31,10 +31,11 @@ rank_frac = -1
 # SET PARAMETERS
 
 fn = 'phi4-math-4claude.txt'
-# fn = 'phi4-bw-4claude.txt'
+fn = 'phi4-bw-4claude.txt'
 
 # select random subset of tasks
-task_sample = 0.5
+task_sample = 1.0
+# task_sample = 0.5
 
 # rand_seed = 2951
 
@@ -338,12 +339,12 @@ test_Y = np.array(V)
 #--------------------------------------------------------------------------
 # Train regression model on all data for gold standard
 
-# reference_y = fit_mll_model(full_X, full_Y, K, Z, rank_frac=0.5,
-#                             learning_rate=learning_rate,
-#                             max_iterations=max_iterations,
-#                             min_iterations=min_iterations,
-#                             )
-reference_y = V.mean(axis=1) # shortcut
+reference_y = fit_mll_model(full_X, full_Y, K, Z, rank_frac=0.5,
+                            learning_rate=learning_rate,
+                            max_iterations=max_iterations,
+                            min_iterations=min_iterations,
+                            )
+# reference_y = V.mean(axis=1) # shortcut
 
 i = np.argmax(reference_y)
 regression_best_checkpoint = checkpoint_nums[i]
@@ -505,27 +506,27 @@ class BotorchSampler:
             interval=5,
             window_size=5,
             patience=patience,
-            min_iterations=min_iterations,
+            min_iterations=0, # min_iterations,
             logging=logging,
             verbosity=self.verbosity,
             prefix=f'[ROUND-{self.round+1}]',
         )
         
-        # loss_tracker = StoppingTracker(
-        #     name="loss",
-        #     mode="improvement",
-        #     threshold=0.0005,  # 0.1% improvement is considered significant
-        #     direction="down",  # loss should decrease
-        #     optimizer=optimizer,
-        #     lr_gamma=0.8,
-        #     lr_steps=10,
-        #     window_size=5,
-        #     patience=patience,
-        #     min_iterations=min_iterations,
-        #     logging=logging,
-        #     verbosity=self.verbosity,
-        #     prefix=f'[ROUND-{self.round+1}]'  # Add prefix to log messages
-        # )
+        loss_tracker = StoppingTracker(
+            name="loss",
+            mode="improvement",
+            threshold=0.0005,  # 0.1% improvement is considered significant
+            direction="down",  # loss should decrease
+            optimizer=optimizer,
+            lr_gamma=0.8,
+            lr_steps=10,
+            window_size=5,
+            patience=patience,
+            min_iterations=min_iterations,
+            logging=logging,
+            verbosity=self.verbosity,
+            prefix=f'[ROUND-{self.round+1}]'  # Add prefix to log messages
+        )
         
         # curve_tracker = StoppingTracker(
         #     name="curvature",
@@ -556,13 +557,15 @@ class BotorchSampler:
                 return False
             loss.backward()
             
-            # if loss_tracker.step(loss.item()): break
+            if loss_tracker.step(loss.item()):
+                break
             
-            if i % degree_tracker.interval == 0: #and self.num_retries > 0:
+            if i % degree_tracker.interval == 0 and i>min_iterations:
                 avg_degree, max_degree, mean_degree = degree_metric(self.model, self.full_x, z=self.z, verbose=False)
-                if degree_tracker.step(avg_degree):
+                if (max_degree>3 or mean_degree>3): # and i>min_iterations:
+                    log(f'[ROUND-{self.round+1}]\tITER-{i}/{self.max_iterations}\tStopping - high degree:\tMaxDeg={max_degree}\tMeanDeg={mean_degree}')
                     break
-                if i>min_iterations and (mean_degree>3 or max_degree>4):
+                if degree_tracker.step(avg_degree):
                     break
             
             # if i % curve_tracker.interval == 0: # and self.num_retries > 0:
@@ -572,9 +575,9 @@ class BotorchSampler:
             
             optimizer.step()
             if i % self.log_interval == 0:
-                try: log(f'[ROUND-{self.round+1}]\tITER-{i}/{self.max_iterations} - Loss: {loss.item():.4g}\tAvgDeg: {avg_degree:.4g}\tMaxDeg: {max_degree}\tMeanDeg: {mean_degree}')
-                # try: log(f'[ROUND-{self.round+1}]\tITER-{i}/{self.max_iterations} - Loss: {loss.item():.4g}\tCurvature: {curvature:.4g}')
-                except: log(f'[ROUND-{self.round+1}]\tITER-{i}/{self.max_iterations} - Loss: {loss.item():.4g}')    
+                try: log(f'[ROUND-{self.round+1}]\tITER-{i}/{self.max_iterations}\tLoss: {loss.item():.4g}\tAvgDeg: {avg_degree:.4g}\tMaxDeg: {max_degree}\tMeanDeg: {mean_degree}')
+                # try: log(f'[ROUND-{self.round+1}]\tITER-{i}/{self.max_iterations}\tLoss: {loss.item():.4g}\tCurvature: {curvature:.4g}')
+                except: log(f'[ROUND-{self.round+1}]\tITER-{i}/{self.max_iterations}\tLoss: {loss.item():.4g}')    
                      
         #---- end train loop --------------------------------------------------
         

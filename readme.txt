@@ -34,4 +34,9 @@ pip install --upgrade spyder
 ----------------------------------------------------------------
 
 mkdir post
+
+# divisible by 3
 ls fig_*.png 2>/dev/null | grep -E "fig_[0-9]+\.png" | while read file; do num=$(echo "$file" | sed -E 's/fig_([0-9]+)\.png/\1/'); if [ $((num % 3)) -eq 0 ]; then cp "$file" post; fi; done
+
+# divisible by 4
+ls fig_*.png 2>/dev/null | grep -E "fig_[0-9]+\.png" | while read file; do num=$(echo "$file" | sed -E 's/fig_([0-9]+)\.png/\1/'); if [ $((num % 4)) -eq 0 ]; then cp "$file" post; fi; done
