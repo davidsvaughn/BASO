@@ -5,7 +5,7 @@ import torch
 import math
 from functools import partial
 import gpytorch
-from crossing import count_line_curve_intersections
+from crossing import count_line_curve_intersections_vectorized
 import matplotlib.pyplot as plt
 
 torch.set_default_dtype(torch.float64)
@@ -246,7 +246,7 @@ class StoppingTracker:
 #--------------------------------------------------------------------------
 
 # degree metric
-def degree_metric(model, X, z=None, verbose=False):
+def degree_metric(model, X, z=None, num_trials=500, verbose=False):
     if z is None:
         z = int(X[:,1].max().item() + 1)
     model.eval()
@@ -261,17 +261,19 @@ def degree_metric(model, X, z=None, verbose=False):
     for i in range(z):
         y = to_numpy(mean[:, i])
         x = to_numpy(X[X[:,1]==i][:,0])
-        d = count_line_curve_intersections(x, y)
+        d = count_line_curve_intersections_vectorized(x, y, num_trials=num_trials)
         # plt.plot(x, y)
         # plt.show()
         degrees.append(d)
     avg_degree = np.mean(degrees)
+    max_degree = np.max(degrees)
+    mean_degree = count_line_curve_intersections_vectorized(x, mean.mean(axis=1), num_trials=num_trials)
     # show histogram
     if verbose:
         print(f'Average degree: {avg_degree}')
         plt.hist(degrees, bins=np.ptp(degrees)+1)
         plt.show()
-    return avg_degree
+    return avg_degree, max_degree, mean_degree
 
 # curvature metric
 def curvature_metric(model, X, z=None, verbose=False):
@@ -368,122 +370,6 @@ def second_derivative(x, y):
         2 * y[n-2] / (h1 * h2) +
         2 * y[n-1] / (h2 * (h1 + h2))
     )
-    
-    return second_derivatives
-
-def second_derivative_X(x, y):
-    """
-    Estimate the second derivative at each point along a curve using vectorized operations.
-    
-    Parameters:
-    X : numpy.ndarray
-        2D array where X[:, 0] contains x-coordinates and X[:, 1] contains y-coordinates.
-        Points should be sorted by x-coordinate.
-    
-    Returns:
-    numpy.ndarray
-        Array of second derivative estimates at each point.
-    """
-    # Extract x and y coordinates
-    # x = X[:, 0]
-    # y = X[:, 1]
-    
-    n = len(x)
-    
-    # Calculate step sizes (distances between adjacent x points)
-    h_forward = np.diff(x)  # x[1:] - x[:-1]
-    
-    # Prepare arrays for vectorized calculation
-    h_backward = np.roll(h_forward, 1)  # Shift right to get previous step size
-    
-    # Create arrays for y values
-    y_prev = np.roll(y, 1)
-    y_next = np.roll(y, -1)
-    
-    # Initialize result array
-    second_derivatives = np.zeros_like(y)
-    
-    # Calculate for interior points (1 to n-2)
-    # Formula: f''(x_i) ≈ 2*[ f(x_i-1)/(h_i*(h_i+h_i+1)) - f(x_i)/(h_i*h_i+1) + f(x_i+1)/(h_i+1*(h_i+h_i+1)) ]
-    mask_interior = np.ones(n, dtype=bool)
-    mask_interior[0] = mask_interior[-1] = False
-    
-    h1 = h_backward[mask_interior]
-    h2 = h_forward[mask_interior]
-    
-    second_derivatives[mask_interior] = (
-        2 * y_prev[mask_interior] / (h1 * (h1 + h2)) -
-        2 * y[mask_interior] / (h1 * h2) +
-        2 * y_next[mask_interior] / (h2 * (h1 + h2))
-    )
-    
-    # Handle endpoints separately if we have at least 3 points
-    if n > 2:
-        # First point (forward difference)
-        h1, h2 = h_forward[0], h_forward[1]
-        second_derivatives[0] = (
-            2 * y[0] / (h1 * (h1 + h2)) -
-            2 * y[1] / (h1 * h2) +
-            2 * y[2] / (h2 * (h1 + h2))
-        )
-        
-        # Last point (backward difference)
-        h1, h2 = h_forward[n-3], h_forward[n-2]
-        second_derivatives[n-1] = (
-            2 * y[n-3] / (h1 * (h1 + h2)) -
-            2 * y[n-2] / (h1 * h2) +
-            2 * y[n-1] / (h2 * (h1 + h2))
-        )
-    
-    return second_derivatives
-
-def second_derivative_old(x, y):
-    """
-    Estimate the second derivative at each point along a curve.
-    
-    Parameters:
-    X : numpy.ndarray
-        2D array where X[:, 0] contains x-coordinates and X[:, 1] contains y-coordinates.
-        Points should be sorted by x-coordinate.
-    
-    Returns:
-    numpy.ndarray
-        Array of second derivative estimates at each point.
-    """
-    # Extract x and y coordinates
-    # x = X[:, 0]
-    # y = X[:, 1]
-    
-    n = len(x)
-    second_derivatives = np.zeros(n)
-    
-    # For interior points, use central difference formula
-    for i in range(1, n-1):
-        # Calculate step sizes (to handle non-uniform x spacing)
-        h1 = x[i] - x[i-1]
-        h2 = x[i+1] - x[i]
-        
-        # Finite difference approximation of second derivative
-        # Using non-uniform grid formula
-        second_derivatives[i] = (2 * y[i-1] / (h1 * (h1 + h2)) - 
-                               2 * y[i] / (h1 * h2) + 
-                               2 * y[i+1] / (h2 * (h1 + h2)))
-    
-    # For endpoints, use forward and backward differences
-    if n > 2:
-        # Forward difference for first point
-        h1 = x[1] - x[0]
-        h2 = x[2] - x[1]
-        second_derivatives[0] = (2 * y[0] / (h1 * (h1 + h2)) - 
-                               2 * y[1] / (h1 * h2) + 
-                               2 * y[2] / (h2 * (h1 + h2)))
-        
-        # Backward difference for last point
-        h1 = x[n-2] - x[n-3]
-        h2 = x[n-1] - x[n-2]
-        second_derivatives[n-1] = (2 * y[n-3] / (h1 * (h1 + h2)) - 
-                                 2 * y[n-2] / (h1 * h2) + 
-                                 2 * y[n-1] / (h2 * (h1 + h2)))
     
     return second_derivatives
 

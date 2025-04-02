@@ -19,7 +19,7 @@ import traceback
 from botorch.models import MultiTaskGP
 from gpytorch.priors import LKJCovariancePrior, SmoothedBoxPrior
 
-from utils import task_standardize, display_fig, StoppingTracker, curvature_metric
+from utils import task_standardize, display_fig, StoppingTracker, curvature_metric, degree_metric
 from utils import to_numpy, log_h, clear_cuda_tensors
 
 # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -527,6 +527,20 @@ class BotorchSampler:
             prefix=f'[ROUND-{self.round+1}]',
         )
         
+        degree_tracker = StoppingTracker(
+            name="degree",
+            mode="direction",
+            threshold=1.005,
+            direction="up",
+            interval=5,
+            window_size=5,
+            patience=patience,
+            min_iterations=min_iterations,
+            logging=logging,
+            verbosity=self.verbosity,
+            prefix=f'[ROUND-{self.round+1}]',
+        )
+        
         #---------------------------------------------------------
         # train loop
         for i in range(self.max_iterations):
@@ -542,17 +556,22 @@ class BotorchSampler:
                 return False
             loss.backward()
             
-            if loss_tracker.step(loss.item()):
-                break
+            # if loss_tracker.step(loss.item()): break
             
-            if i % curve_tracker.interval == 0 and self.num_retries > 0:
-                curvature = curvature_metric(self.model, self.full_x, verbose=False)
-                if curve_tracker.step(curvature):
+            if i % degree_tracker.interval == 0: #and self.num_retries > 0:
+                avg_degree, max_degree, mean_degree = degree_metric(self.model, self.full_x, z=self.z, verbose=False)
+                if degree_tracker.step(avg_degree):
                     break
+            
+            # if i % curve_tracker.interval == 0: # and self.num_retries > 0:
+                # curvature = curvature_metric(self.model, self.full_x, verbose=False)
+            #     if curve_tracker.step(curvature):
+            #         break
             
             optimizer.step()
             if i % self.log_interval == 0:
-                try: log(f'[ROUND-{self.round+1}]\tITER-{i}/{self.max_iterations} - Loss: {loss.item():.4g}\tCurvature: {curvature:.4g}')
+                try: log(f'[ROUND-{self.round+1}]\tITER-{i}/{self.max_iterations} - Loss: {loss.item():.4g}\tAvgDeg: {avg_degree:.4g}\tMaxDeg: {max_degree}\tMeanDeg: {mean_degree}')
+                # try: log(f'[ROUND-{self.round+1}]\tITER-{i}/{self.max_iterations} - Loss: {loss.item():.4g}\tCurvature: {curvature:.4g}')
                 except: log(f'[ROUND-{self.round+1}]\tITER-{i}/{self.max_iterations} - Loss: {loss.item():.4g}')    
                      
         #---- end train loop --------------------------------------------------
