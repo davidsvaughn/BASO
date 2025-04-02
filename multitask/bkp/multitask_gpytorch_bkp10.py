@@ -10,7 +10,7 @@ import torch
 import gpytorch
 # import gpytorch.constraints
 
-from multitask_synthetic import generate_synthetic_checkpoint_data
+from multitask.bkp.multitask_synthetic import generate_synthetic_checkpoint_data
 
 torch.set_default_dtype(torch.float64)
 

@@ -786,7 +786,7 @@ for _ in range(10):
     
     try:
         # Subsample data
-        sampled_mask = init_samples(K, Z, init_obs, log=log, optimize=False)
+        sampled_mask = init_samples(K, Z, init_obs, log=log)
         x_idx, t_idx = np.where(sampled_mask)
         
         train_X = torch.tensor([ [checkpoints[i], j] for i, j in  zip(x_idx, t_idx) ], dtype=torch.float64)

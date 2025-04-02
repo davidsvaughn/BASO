@@ -9,7 +9,7 @@ from matplotlib import pyplot as plt
 import gc
 import torch
 import gpytorch
-from multitask_synthetic import generate_synthetic_checkpoint_data
+from multitask.bkp.multitask_synthetic import generate_synthetic_checkpoint_data
 
 torch.set_default_dtype(torch.float64)
 

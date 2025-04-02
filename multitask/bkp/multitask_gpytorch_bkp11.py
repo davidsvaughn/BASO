@@ -10,7 +10,7 @@ import torch
 import gpytorch
 
 from utils import clear_cuda_tensors, log_h
-from multitask_synthetic import generate_synthetic_checkpoint_data
+from multitask.bkp.multitask_synthetic import generate_synthetic_checkpoint_data
 
 from surprise import initialize_surprise_tracker, surprise_based_stopping
 
