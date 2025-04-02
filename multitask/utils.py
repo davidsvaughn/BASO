@@ -12,6 +12,58 @@ torch.set_default_dtype(torch.float64)
 
 #--------------------------------------------------------------------------
 
+class adict(dict):
+    def __init__(self, *av, **kav):
+        dict.__init__(self, *av, **kav)
+        self.__dict__ = self
+        
+    def copy_to(self, other):
+        """
+        Copy the contents of this adict to another adict.
+        
+        Parameters:
+        other (adict): The target adict to copy to.
+        """
+        for key, value in self.items():
+            if isinstance(value, dict):
+                if key not in other:
+                    other[key] = adict()
+                other[key].copy_to(value)
+            else:
+                other[key] = value
+
+# function to recursively convert nested dictionaries to adict
+def to_adict(d):
+    if isinstance(d, dict):
+        return adict({k: to_adict(v) for k, v in d.items()})
+    elif isinstance(d, list):
+        return [to_adict(v) for v in d]
+    else:
+        return d
+    
+# def copy_adict(src, dst):
+#     """
+#     Recursively copy attributes from src to dst.
+    
+#     Parameters:
+#     src (adict): Source dictionary
+#     dst (adict): Destination dictionary
+#     """
+#     for key, value in src.items():
+#         if isinstance(value, dict):
+#             if key not in dst:
+#                 dst[key] = adict()
+#             copy_adict(value, dst[key])
+#         else:
+#             if key not in dst:
+#                 dst[key] = value
+#             else:
+#                 # only copy if the value is different
+#                 if dst[key] != value:
+#                     print(f"Warning: {key} already exists in destination dictionary.")
+
+#--------------------------------------------------------------------------
+
 # function to convert tensor to numpy, first to cpu if needed
 def to_numpy(x):
     if x.requires_grad:
@@ -36,35 +88,42 @@ def display_fig(run_dir, fig=None, fn=None):
         
 #--------------------------------------------------------------------------
 
+                
 # degree metric
 def degree_metric(model, X, 
-                  z=None, 
+                  Z=None, 
                   num_trials=500, 
                   mean_max=None,
                   max_max=None,
+                  ret=None,
                   verbose=False):
-    if z is None:
-        z = int(X[:,1].max().item() + 1)
+    if Z is None:
+        Z = int(X[:,1].max().item() + 1)
     model.eval()
     model.likelihood.eval()
     with torch.no_grad(), gpytorch.settings.fast_pred_var():
         pred = model.likelihood(model(X))
-    mean = pred.mean.reshape(-1, z)
+    mean = pred.mean.reshape(-1, Z)
     model.train()
     model.likelihood.train()
     
     avg_degree, max_degree, mean_degree = -1,-1,-1
     
-    # degree of mean regression line
+    # mean_degree = degree of mean regression line (mean of all curves across all tasks)
     x = to_numpy(X[X[:,1]==0][:,0])
     mean_degree = count_line_curve_intersections_vectorized(x, mean.mean(axis=1), num_trials=num_trials)
     if mean_max is not None:
         if mean_degree > mean_max:
             # mean_degree exceeds mean_max, so stop
-            return avg_degree, max_degree, mean_degree
+            stats = adict({'avg': avg_degree, 'max': max_degree, 'mean': mean_degree})
+            if ret is None: 
+                return stats
+            else:
+                stats.copy_to(ret)
+                return ret
     
     degrees = []
-    for i in range(z):
+    for i in range(Z):
         y = to_numpy(mean[:, i])
         # x = to_numpy(X[X[:,1]==i][:,0])
         d = count_line_curve_intersections_vectorized(x, y, num_trials=num_trials)
@@ -75,7 +134,12 @@ def degree_metric(model, X,
         if max_max is not None:
             if max_degree > max_max:
                 # max_degree exceeds max_max, so stop
-                return avg_degree, max_degree, mean_degree
+                stats = adict({'avg': avg_degree, 'max': max_degree, 'mean': mean_degree})
+                if ret is None: 
+                    return stats
+                else:
+                    stats.copy_to(ret)
+                    return ret
             
     avg_degree = np.mean(degrees)
     # show histogram
@@ -83,22 +147,27 @@ def degree_metric(model, X,
         print(f'Average degree: {avg_degree}')
         plt.hist(degrees, bins=np.ptp(degrees)+1)
         plt.show()
-    return avg_degree, max_degree, mean_degree
+    stats = adict({'avg': avg_degree, 'max': max_degree, 'mean': mean_degree})
+    if ret is None: 
+        return stats
+    else:
+        stats.copy_to(ret)
+        return ret
 
 # curvature metric
-def curvature_metric(model, X, z=None, verbose=False):
-    if z is None:
-        z = int(X[:,1].max().item() + 1)
+def curvature_metric(model, X, Z=None, verbose=False):
+    if Z is None:
+        Z = int(X[:,1].max().item() + 1)
     model.eval()
     model.likelihood.eval()
     with torch.no_grad(), gpytorch.settings.fast_pred_var():
         pred = model.likelihood(model(X))
-    mean = pred.mean.reshape(-1, z)
+    mean = pred.mean.reshape(-1, Z)
     model.train()
     model.likelihood.train()
     
     deriv, maxes = [],[]
-    for i in range(z):
+    for i in range(Z):
         y = to_numpy(mean[:, i])
         x = to_numpy(X[X[:,1]==i][:,0])
         

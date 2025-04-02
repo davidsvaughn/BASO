@@ -437,6 +437,8 @@ class BotorchSampler:
         # "Loss" for GPs - the marginal log likelihood
         mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood=self.model.likelihood, model=self.model)
         
+        # fit_gpytorch_mll(mll, max_retries=1)
+        
         # Use the adam optimizer
         optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
         
@@ -472,6 +474,36 @@ class BotorchSampler:
             return stop
         eval_degree = partial(degree_condition, model=self.model, X=self.full_x, Z=self.z, log=log, interval=5)
         
+        #----------------------------------------------------------
+        
+        # degree_tracker = StoppingTracker(
+        #     name="degree",
+        #     mode="direction",
+        #     threshold=1.005,
+        #     direction="up",
+        #     interval=5,
+        #     window_size=5,
+        #     patience=patience,
+        #     min_iterations=0, # min_iterations,
+        #     logging=logging,
+        #     verbosity=self.verbosity,
+        #     prefix=f'[ROUND-{self.round+1}]',
+        # )
+        
+        # curve_tracker = StoppingTracker(
+        #     name="curvature",
+        #     mode="direction",
+        #     threshold=1.005,
+        #     direction="up",
+        #     interval=5,
+        #     window_size=5,
+        #     patience=patience,
+        #     min_iterations=min_iterations,
+        #     logging=logging,
+        #     verbosity=self.verbosity,
+        #     prefix=f'[ROUND-{self.round+1}]',
+        # )
+        
         #---------------------------------------------------------
         # train loop
         for i in range(self.max_iterations):
@@ -489,9 +521,20 @@ class BotorchSampler:
             
             if eval_degree(iter=i):
                 break
-            
             if loss_tracker.eval(loss.item()):
                 break
+            
+            # if i % degree_tracker.interval == 0 and i>min_iterations:
+            #     stats = degree_metric(model=self.model, X=self.full_x, Z=self.z)
+            #     if ( stats.max > 3 or stats.mean > 3 ): # and i>min_iterations:
+            #         log(f'[ROUND-{self.round+1}]\tITER-{i}/{self.max_iterations}\tStopping - high degree:\tMaxDeg={stats.max}\tMeanDeg={stats.mean}')
+            #         break
+            #     if degree_tracker.step(stats.avg):
+            #         break
+            # if i % curve_tracker.interval == 0: # and self.num_retries > 0:
+                # curvature = curvature_metric(self.model, self.full_x, verbose=False)
+            #     if curve_tracker.step(curvature):
+            #         break
             
             optimizer.step()
             if i % self.log_interval == 0:

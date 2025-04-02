@@ -81,7 +81,7 @@ class StoppingTracker:
         else:
             self.message_log.append(msg)
     
-    def step(self, value):
+    def eval(self, value):
         """ Add a new value to the history.
             Checks if early stopping is triggered, 
             Otherwise triggers lr reduction if needed.
