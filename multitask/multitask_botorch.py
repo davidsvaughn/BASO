@@ -19,8 +19,10 @@ import traceback
 from botorch.models import MultiTaskGP
 from gpytorch.priors import LKJCovariancePrior, SmoothedBoxPrior
 
-from utils import task_standardize, display_fig, StoppingTracker, curvature_metric, degree_metric
+from utils import task_standardize, display_fig, curvature_metric, degree_metric
 from utils import to_numpy, log_h, clear_cuda_tensors
+from stopping import StoppingTracker
+from sampling import init_samples
 
 # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 torch.set_default_dtype(torch.float64)
@@ -31,7 +33,7 @@ rank_frac = -1
 # SET PARAMETERS
 
 fn = 'phi4-math-4claude.txt'
-fn = 'phi4-bw-4claude.txt'
+# fn = 'phi4-bw-4claude.txt'
 
 # select random subset of tasks
 task_sample = 1.0
@@ -176,62 +178,6 @@ if task_sample>0 and task_sample!=1:
 ei_gamma = np.exp(np.log(ei_f) / (ei_t*K*Z - 2*Z))
 log(f'FYI: ei_gamma: {ei_gamma:.4g}')
 
-#-------------------------------------------------------------------------
-
-def init_samples(K, Z, init_obs):
-    if init_obs >= 1:
-        if init_obs < 2:
-            init_obs = 2
-            log('FYI: increasing init_obs to 2 (minimum 2 obs/task allowed)')
-        m = ceil(init_obs * Z)
-    else:
-        min_frac = 2/K # == 2*Z/(K*Z)
-        if init_obs < min_frac:
-            m = 2*Z
-            log(f'FYI: increasing init_obs to {min_frac:.4g} (minimum 2 obs/task allowed)')
-        else:
-            m = max(2*Z, ceil(init_obs * K * Z))
-    log(f'FYI: initializing sampler with {m} observations ( ~{m/(K*Z):.4g} of all obs, ~{m/Z:.4g} obs/task )\n')
-    log('-'*80)
-    
-    tasks = list(range(Z))
-    checkpoints = list(range(K))
-    chk_tasks = [[] for _ in range(K)]
-    n = 0
-    while True:
-        # select a random checkpoint
-        k = random.choice(checkpoints)
-        try:
-            # select random task not already selected for this checkpoint
-            t = random.choice([tt for tt in tasks if tt not in chk_tasks[k]])
-        except:
-            continue # no task satisfies above condition... retry
-        chk_tasks[k].append(t)
-        n += 1
-        if n >= m:
-            break
-        tasks.remove(t)
-        checkpoints.remove(k)
-        if len(tasks) == 0:
-            tasks = list(range(Z)) # reset task list
-        if len(checkpoints) == 0:
-            checkpoints = list(range(K))
-    random.shuffle(chk_tasks)
-    
-    # convert to x,y indices
-    x,y = [],[]
-    for i, tasks in enumerate(chk_tasks):
-        for j in tasks:
-            x.append(i)
-            y.append(j)
-    x, y = np.array(x), np.array(y)
-                    
-    sampled_mask = np.zeros((K, Z), dtype=bool)
-    for i, j in zip(x, y):
-        sampled_mask[i, j] = True
-    
-    return x, y, sampled_mask
-
 #--------------------------------------------------------------------------
 # fit full regression model to all data for gold standard
 # (this is the regression model we are trying to approximate)
@@ -339,12 +285,12 @@ test_Y = np.array(V)
 #--------------------------------------------------------------------------
 # Train regression model on all data for gold standard
 
-reference_y = fit_mll_model(full_X, full_Y, K, Z, rank_frac=0.5,
-                            learning_rate=learning_rate,
-                            max_iterations=max_iterations,
-                            min_iterations=min_iterations,
-                            )
-# reference_y = V.mean(axis=1) # shortcut
+# reference_y = fit_mll_model(full_X, full_Y, K, Z, rank_frac=0.5,
+#                             learning_rate=learning_rate,
+#                             max_iterations=max_iterations,
+#                             min_iterations=min_iterations,
+#                             )
+reference_y = V.mean(axis=1) # shortcut
 
 i = np.argmax(reference_y)
 regression_best_checkpoint = checkpoint_nums[i]
@@ -840,7 +786,9 @@ for _ in range(10):
     
     try:
         # Subsample data
-        x_idx, t_idx, sampled_mask = init_samples(K, Z, init_obs)
+        sampled_mask = init_samples(K, Z, init_obs, log=log, optimize=False)
+        x_idx, t_idx = np.where(sampled_mask)
+        
         train_X = torch.tensor([ [checkpoints[i], j] for i, j in  zip(x_idx, t_idx) ], dtype=torch.float64)
         train_Y = torch.tensor(V[x_idx, t_idx], dtype=torch.float64).unsqueeze(-1)
             
