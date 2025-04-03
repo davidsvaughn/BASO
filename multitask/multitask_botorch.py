@@ -180,125 +180,6 @@ ei_gamma = np.exp(np.log(ei_f) / (ei_t*N*M - 2*M))
 log(f'FYI: ei_gamma: {ei_gamma:.4g}')
 
 #--------------------------------------------------------------------------
-# fit full regression model to all data for gold standard
-# (this is the regression model we are trying to approximate)
-def fit_mll_model(x_train, y_train, n, m,
-                  rank_frac=0.5, 
-                  learning_rate=0.1,
-                  max_iterations=1000,
-                  min_iterations=100,
-                  window_size=5,
-                  patience=10,
-                  eta=None, # 1.0
-                  ):
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    
-    y_train, (t_mu, t_sig) = task_standardize(y_train, x_train)
-    
-    rank = int(rank_frac * m) if rank_frac > 0 else None
-    if eta is None:
-        task_covar_prior = None
-    else:
-        task_covar_prior = LKJCovariancePrior(n=m, 
-                                            eta=torch.tensor(eta).to(device),
-                                            sd_prior=SmoothedBoxPrior(math.exp(-6), math.exp(1.25), 0.05)).to(device)
-    model = MultiTaskGP(x_train, y_train, task_feature=-1, 
-                        rank=rank,
-                        task_covar_prior=task_covar_prior,
-                        outcome_transform=None,
-                        ).to(device)
-
-    x_train, y_train = x_train.to(device), y_train.to(device)
-    
-    # Set the model and likelihood to training mode
-    model.train()
-    model.likelihood.train() # need this ???
-    
-    # "Loss" for GPs - the marginal log likelihood
-    mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood=model.likelihood, model=model)
-    
-    # Use the adam optimizer
-    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-    
-    #---------------------------------------------------------
-    # stopping criteria
-    
-    loss_condition = StoppingCondition(
-        value="loss",
-        condition="0 < (x[-2] - x[-1])/abs(x[-2]) < t",
-        t=0.0005,
-        alpha=5,
-        min_iterations=50,
-        patience=5,
-        lr_steps=10,
-        lr_gamma=0.8,
-        optimizer=optimizer,
-        logging=logging,
-        verbosity=2,
-        prefix=f'[FULL-MODEL]'
-    )
-
-    
-    #----------------------------------------------------------
-    # train loop
-    for i in range(max_iterations):
-        optimizer.zero_grad()
-        output = model(x_train)
-        loss = -mll(output, model.train_targets)
-        loss.backward()
-        
-        if loss_condition.check(loss=loss.item()):
-            break
-        
-        optimizer.step()
-        if i % log_interval == 0:
-            log(f'[FULL-MODEL]\tITER-{i}/{max_iterations} - Loss: {loss.item():.4g}')
-            
-    #--------------------------------------------------------
-    # set the model, likelihood to eval mode and predict
-    model.eval()
-    model.likelihood.eval()
-    with torch.no_grad(), gpytorch.settings.fast_pred_var():
-        predictions = model.likelihood(model(x_train))
-        
-    y_mean = predictions.mean
-    y_pred = to_numpy(y_mean.reshape(n, m))
-    y_pred = y_pred * t_sig + t_mu
-    y_mean = y_pred.mean(axis=1)
-    return y_mean
-
-#--------------------------------------------------------------------------     
-# init dataset constructs
-# X_test = (X_feats - X_feats.min()) / (X_feats.max() - X_feats.min())
-# all_idx = np.where(np.ones_like(Y_test))
-# X_inputs = torch.tensor([ [X_test[i], j] for i, j in  zip(*all_idx) ], dtype=torch.float64)
-
-
-# find best checkpoint
-# Y_test = np.array(Y_test)
-
-best_idx = np.argmax(Y_test.mean(axis=1))
-best_y_mean = Y_test.mean(axis=1)[best_idx]
-best_checkpoint = X_feats[best_idx]
-# log(f'TRUE BEST CHECKPOINT:\t{best_checkpoint}\tY={best_y_mean:.4f}')
-
-#--------------------------------------------------------------------------
-# Train regression model on all data for gold standard
-
-# reference_y = fit_mll_model(X_inputs, full_Y, N, M, rank_frac=0.5,
-#                             learning_rate=learning_rate,
-#                             max_iterations=max_iterations,
-#                             min_iterations=min_iterations,
-#                             )
-reference_y = Y_test.mean(axis=1) # shortcut
-
-i = np.argmax(reference_y)
-regression_best_checkpoint = X_feats[i]
-regression_y_max = reference_y[i]
-log(f'TRU BEST CHECKPOINT:\t{best_checkpoint}\tY={best_y_mean:.4f}')
-log(f'REF BEST CHECKPOINT:\t{regression_best_checkpoint}\tY={regression_y_max:.4f}')
-
-#--------------------------------------------------------------------------
 
 class BotorchSampler:
     def __init__(self,
@@ -394,7 +275,7 @@ class BotorchSampler:
         self.num_retries += 1
         x_train = self.X_train
         y_train = self.Y_train
-        m = S.shape[1]
+        m = self.S.shape[1]
         
         # standardize y_train
         y_train, (t_mu, t_sig) = task_standardize(y_train, x_train)
@@ -427,16 +308,19 @@ class BotorchSampler:
         #---------------------------------------------------------------------
         # define task_covar_prior (IMPORTANT!!! nothing works without this...)
         # see: https://archive.botorch.org/v/0.9.2/api/_modules/botorch/models/multitask.html
-        
-        task_covar_prior = LKJCovariancePrior(n=m, 
-                                              eta=torch.tensor(eta).to(self.device),
-                                              sd_prior=SmoothedBoxPrior(math.exp(-6), math.exp(1.25), 0.05))
+        if eta is None:
+            task_covar_prior = None
+        else:
+            task_covar_prior = LKJCovariancePrior(n=m, 
+                                                  eta=torch.tensor(eta).to(self.device),
+                                                  sd_prior=SmoothedBoxPrior(math.exp(-6), math.exp(1.25), 0.05)).to(self.device)
+            
         #---------------------------------------------------------------------
         # Initialize multitask model
         
         self.model = MultiTaskGP(x_train, y_train, task_feature=-1, 
                                  rank=rank,
-                                 task_covar_prior=task_covar_prior.to(self.device),
+                                 task_covar_prior=task_covar_prior,
                                  outcome_transform=None,
                                  ).to(self.device)
 
@@ -512,8 +396,7 @@ class BotorchSampler:
             
             optimizer.step()
             if i % self.log_interval == 0:
-                try: log(f'[ROUND-{self.round+1}]\tITER-{i}/{self.max_iterations}\tLoss: {loss.item():.4g}\tAvgDeg: {deg_stats.avg:.4g}\tMaxDeg: {deg_stats.max}\tMeanDeg: {deg_stats.mean}')
-                # try: log(f'[ROUND-{self.round+1}]\tITER-{i}/{self.max_iterations}\tLoss: {loss.item():.4g}\tCurvature: {curvature:.4g}')
+                try: log(f'[ROUND-{self.round+1}]\tITER-{i}/{self.max_iterations}\tLoss: {loss.item():.4g}\tMaxDeg: {deg_stats.max}\tAvgDeg: {deg_stats.avg:.4g}')
                 except: log(f'[ROUND-{self.round+1}]\tITER-{i}/{self.max_iterations}\tLoss: {loss.item():.4g}')    
                      
         #---- end train loop --------------------------------------------------
@@ -551,31 +434,33 @@ class BotorchSampler:
         y_sigma = np.array([np.sqrt(y_covar[i,:,i].sum()) for i in range(n)]) / m
         
         # current max estimate
-        i = np.argmax(y_mean)
+        self.current_best_idx = i = np.argmax(y_mean)
         self.current_best_checkpoint = self.X_feats[i]
         # current_y_mean = y_mean[i] # current y_mean estimate at peak_idx of y_mean estimate
         
-        # percent difference between current_y_mean and best_y_mean
-        # current_y_mean = self.Y_test.mean(axis=1)[i] # true y_mean at peak_idx of y_mean estimate
-        current_y_val = reference_y[i] # regression_y at peak_idx of y_mean estimate
-        self.current_err = err = abs(current_y_val - regression_y_max)/regression_y_max
-        
-        log('-'*80)
-        log(f'[ROUND-{self.round+1}]\tSTATS\t{self.current_best_checkpoint}\t{current_y_val:.4f}\t{err:.4g}\t{self.sample_fraction:.4f}')
-        log(f'[ROUND-{self.round+1}]\tCURRENT BEST\tCHECKPOINT-{self.current_best_checkpoint}\tY_PRED={current_y_val:.4f}\tY_ERR={100*err:.4g}%\t({100*self.sample_fraction:.2f}% sampled)')
+        #-------------------------------------------------
         
         self.y_pred = y_pred
         self.y_mean = y_mean
         self.y_sig = y_sig
         self.y_sigma = y_sigma
-        return y_pred, y_sig, y_mean, y_sigma
+        return y_mean, y_sigma, y_pred, y_sig
     
+    def compare(self, y_ref):
+        i = np.argmax(y_ref)
+        y_ref_max = y_ref[i]
+        # ref_best_checkpoint = self.X_feats[i]
+        current_y_val = y_ref[self.current_best_idx]
+        self.current_err = err = abs(current_y_val - y_ref_max)/y_ref_max
+        log('-'*80)
+        log(f'[ROUND-{self.round+1}]\tSTATS\t{self.current_best_checkpoint}\t{current_y_val:.4f}\t{err:.4g}\t{self.sample_fraction:.4f}')
+        log(f'[ROUND-{self.round+1}]\tCURRENT BEST\tCHECKPOINT-{self.current_best_checkpoint}\tY_PRED={current_y_val:.4f}\tY_ERR={100*err:.4g}%\t({100*self.sample_fraction:.2f}% sampled)')
+        
     #-------------------------------------------------------------------------
     # Plotting functions
     
     def display(self, fig=None, fn=None):
         display_fig(self.run_dir, fig=fig, fn=fn)
-    
     
     def plot_posterior_mean(self):
         Y_test_mean = self.Y_test.mean(axis=1)
@@ -583,16 +468,12 @@ class BotorchSampler:
         plt.plot(self.X_feats, self.y_mean, 'b')
         plt.fill_between(self.X_feats, self.y_mean - 2*self.y_sigma, self.y_mean + 2*self.y_sigma, alpha=0.5)
         plt.plot(self.X_feats, Y_test_mean, 'r')
-        
         plt.legend(['Posterior Mean', 'Confidence', 'True Mean'])
         plt.title(f'Round: {self.round} - Current Best Checkpoint: {self.current_best_checkpoint}')
         self.display()
         
-        
     def plot_task(self, j, msg='', fvals=None):
         fig, ax1 = plt.subplots(figsize=(15, 10))
-        
-        # x = self.X_test
         x = self.X_feats
         
         # Plot all data as black stars
@@ -767,6 +648,42 @@ class BotorchSampler:
         # return next sample
         return next_i, next_j
 
+
+#--------------------------------------------------------------------------
+# Train regression model on all data for gold standard
+# y_gold = Y_test.mean(axis=1) # shortcut
+
+sampler = BotorchSampler(S=np.ones((N, M), dtype=bool),
+                         X_feats=X_feats, 
+                         Y_test=Y_test,
+                         lr=learning_rate,
+                         eta=None,
+                         max_iterations=1000,
+                         min_iterations=100,
+                         patience=10,
+                         rank_frac=0.5,
+                         log_interval=10,
+                         use_cuda=use_cuda,
+                         run_dir=run_dir)
+
+# Fit model to full dataset
+sampler.fit()
+y_gold, _,_,_ = sampler.predict()
+
+
+#--------------------------------------------------------------------------
+
+# find best checkpoint
+best_idx = np.argmax(Y_test.mean(axis=1))
+best_y_mean = Y_test.mean(axis=1)[best_idx]
+best_checkpoint = X_feats[best_idx]
+
+i = np.argmax(y_gold)
+regression_best_checkpoint = X_feats[i]
+regression_y_max = y_gold[i]
+log(f'TRU BEST CHECKPOINT:\t{best_checkpoint}\tY={best_y_mean:.4f}')
+log(f'REF BEST CHECKPOINT:\t{regression_best_checkpoint}\tY={regression_y_max:.4f}')
+
 #--------------------------------------------------------------------------
 
 for _ in range(10):
@@ -786,17 +703,17 @@ for _ in range(10):
                                  ei_gamma=ei_gamma,
                                  max_iterations=max_iterations,
                                  max_retries=max_retries,
-                                 verbosity=verbosity,
+                                 verbosity=1,
                                  max_sample=max_sample, 
                                  rank_frac=rank_frac,
                                  log_interval=log_interval,
                                  use_cuda=use_cuda,
-                                 verbosity=2,
                                  run_dir=run_dir)
 
         # Fit model to initial samples
         sampler.fit()
         sampler.predict()
+        sampler.compare(y_gold)
         # sampler.plot_all(max_fig=10)
 
         # Run Bayesian optimization loop
@@ -804,6 +721,7 @@ for _ in range(10):
             _, next_task = sampler.sample_next()
             sampler.fit()
             sampler.predict()
+            sampler.compare(y_gold)
             sampler.plot_task(next_task, '(after)')
             sampler.plot_posterior_mean()
             
