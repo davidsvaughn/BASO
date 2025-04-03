@@ -90,27 +90,27 @@ def display_fig(run_dir, fig=None, fn=None):
 
                 
 # degree metric
-def degree_metric(model, X, 
-                  Z=None, 
+def degree_metric(model, X_inputs, 
+                  m=None, 
                   num_trials=500, 
                   mean_max=None,
                   max_max=None,
                   ret=None,
                   verbose=False):
-    if Z is None:
-        Z = int(X[:,1].max().item() + 1)
+    if m is None:
+        m = int(X_inputs[:,1].max().item() + 1)
     model.eval()
     model.likelihood.eval()
     with torch.no_grad(), gpytorch.settings.fast_pred_var():
-        pred = model.likelihood(model(X))
-    mean = pred.mean.reshape(-1, Z)
+        pred = model.likelihood(model(X_inputs))
+    mean = pred.mean.reshape(-1, m)
     model.train()
     model.likelihood.train()
     
     avg_degree, max_degree, mean_degree = -1,-1,-1
     
     # mean_degree = degree of mean regression line (mean of all curves across all tasks)
-    x = to_numpy(X[X[:,1]==0][:,0])
+    x = to_numpy(X_inputs[X_inputs[:,1]==0][:,0])
     mean_degree = count_line_curve_intersections_vectorized(x, mean.mean(axis=1), num_trials=num_trials)
     if mean_max is not None:
         if mean_degree > mean_max:
@@ -123,9 +123,8 @@ def degree_metric(model, X,
                 return ret
     
     degrees = []
-    for i in range(Z):
+    for i in range(m):
         y = to_numpy(mean[:, i])
-        # x = to_numpy(X[X[:,1]==i][:,0])
         d = count_line_curve_intersections_vectorized(x, y, num_trials=num_trials)
         # plt.plot(x, y)
         # plt.show()
@@ -155,21 +154,21 @@ def degree_metric(model, X,
         return ret
 
 # curvature metric
-def curvature_metric(model, X, Z=None, verbose=False):
-    if Z is None:
-        Z = int(X[:,1].max().item() + 1)
+def curvature_metric(model, X_inputs, m=None, verbose=False):
+    if m is None:
+        m = int(X_inputs[:,1].max().item() + 1)
     model.eval()
     model.likelihood.eval()
     with torch.no_grad(), gpytorch.settings.fast_pred_var():
-        pred = model.likelihood(model(X))
-    mean = pred.mean.reshape(-1, Z)
+        pred = model.likelihood(model(X_inputs))
+    mean = pred.mean.reshape(-1, m)
     model.train()
     model.likelihood.train()
     
     deriv, maxes = [],[]
-    for i in range(Z):
+    for i in range(m):
         y = to_numpy(mean[:, i])
-        x = to_numpy(X[X[:,1]==i][:,0])
+        x = to_numpy(X_inputs[X_inputs[:,1]==i][:,0])
         
         d = second_derivative(x, y)
         # d2 = second_derivative_old(x, y)
@@ -317,14 +316,13 @@ def task_standardize(Y, X):
     Y = Y.clone()
     t = X[:,1].long()
     means, stds, ys = [], [], []
-    Z = t.max() + 1
-    for i in range(Z):
+    m = t.max() + 1
+    for i in range(m):
         y = Y[t==i][:,0]
         mu = y.mean()
         yc = y - mu
         ys.append(yc)
         means.append(mu)
-        #-----------------------------------
     means = np.array(means)
     #-----------------------------------
     yy = torch.cat(ys).numpy()
@@ -332,7 +330,7 @@ def task_standardize(Y, X):
     # stds = np.array([empirical_bayes_std(y.numpy(), yy) for y in ys])
     #-----------------------------------
     # actually perform the standardization
-    for i in range(Z):
+    for i in range(m):
         Y[t==i] = (Y[t==i] - means[i]) / stds[i]
     # return the standardized Y, and the means and stds for later inverse transform
     return Y, (means, stds)
@@ -363,44 +361,6 @@ def inspect_matrix(V):
         if i > 10:
             break
     sys.exit()
-    
-def task_standardize_old(Y, X):
-    Y = Y.clone()
-    t = X[:,1].long()
-    means, stds, ys = [], [], []
-    Z = t.max() + 1
-    jj = 0
-    for i in range(Z):
-        y = Y[t==i][:,0]
-        mu = y.mean()
-        #-----------------------------------
-        # center y around the mean
-        yc = y - mu
-        # if std of yc is too small, center with global mean
-        if not yc.std() > 1e-6:
-            jj+= 1
-            print(f'HEY! {jj}')
-            Yf = Y.flatten()
-            # bootstrap sample from the full dataset
-            ymu = Yf[np.random.randint(0, len(Yf), size=len(Yf))].mean()
-            yc = y - ymu
-            mu = ymu
-        ys.append(yc)
-        means.append(mu)
-        #-----------------------------------
-    means = np.array(means)
-    #-----------------------------------
-    yy = torch.cat(ys).numpy()
-    stds = np.array([bayesian_std(y.numpy(), yy) for y in ys])
-    # stds = np.array([empirical_bayes_std(y.numpy(), yy) for y in ys])
-    # plt.hist(stds, bins=10)
-    # plt.show()
-    #-----------------------------------
-    # actually perform the standardization
-    for i in range(Z):
-        Y[t==i] = (Y[t==i] - means[i]) / stds[i]
-    # return the standardized Y, and the means and stds for later inverse transform
-    return Y, (means, stds)
 
 #--------------------------------------------------------------------------
 # function to search all attributes of a parameter recursively until finding an attribute name

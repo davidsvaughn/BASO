@@ -24,7 +24,7 @@ from gpytorch.priors import LKJCovariancePrior, SmoothedBoxPrior
 
 from utils import task_standardize, display_fig, curvature_metric, degree_metric, adict
 from utils import to_numpy, log_h, clear_cuda_tensors
-from stopping2 import StoppingCondition, StoppingConditions
+from stopping import StoppingTracker
 from sampling import init_samples
 
 # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -73,7 +73,7 @@ ei_f, ei_t = 0.2, 0.05
 # ei_gamma = 0.9925
 
 # logging intervals
-log_interval = 5
+log_interval = 10
 verbosity = 1
 
 # compare_random = False
@@ -222,38 +222,21 @@ def fit_mll_model(train_x, train_y, k, z,
     
     #---------------------------------------------------------
     # stopping criteria
-    
-    loss_tracker = StoppingCondition(
-        value="loss",
-        condition="0 < (x[-2] - x[-1])/abs(x[-2]) < t",
-        t=0.0005,
-        alpha=5,
-        min_iterations=50,
-        patience=5,
-        lr_steps=10,
+    loss_tracker = StoppingTracker(
+        name="loss",
+        mode="improvement",
+        threshold=0.0005,  # 0.1% improvement is considered significant
+        direction="down",  # loss should decrease
         lr_gamma=0.8,
+        lr_steps=10,
         optimizer=optimizer,
+        window_size=window_size,
+        patience=patience,
+        min_iterations=min_iterations,
         logging=logging,
-        verbosity=3,
+        verbosity=1,
         prefix=f'[FULL-MODEL]'
     )
-    
-    
-    # loss_tracker = StoppingTracker(
-    #     name="loss",
-    #     mode="improvement",
-    #     threshold=0.0005,  # 0.1% improvement is considered significant
-    #     direction="down",  # loss should decrease
-    #     lr_gamma=0.8,
-    #     lr_steps=10,
-    #     optimizer=optimizer,
-    #     window_size=window_size,
-    #     patience=patience,
-    #     min_iterations=min_iterations,
-    #     logging=logging,
-    #     verbosity=1,
-    #     prefix=f'[FULL-MODEL]'
-    # )
     
     #----------------------------------------------------------
     # train loop
@@ -262,7 +245,7 @@ def fit_mll_model(train_x, train_y, k, z,
         output = model(train_x)
         loss = -mll(output, model.train_targets)
         loss.backward()
-        if loss_tracker.step(loss=loss.item()):
+        if loss_tracker.eval(loss.item()):
             break
         optimizer.step()
         if i % log_interval == 0:
@@ -459,42 +442,36 @@ class BotorchSampler:
         #---------------------------------------------------------
         # stopping criteria
         
-        loss_tracker = StoppingCondition(
-            value="loss",
-            condition="0 < (x[-2] - x[-1])/abs(x[-2]) < t",
-            t=0.0005,
-            alpha=5,
-            min_iterations=min_iterations, # 50
-            patience=patience, # 5
-            lr_steps=5,
-            lr_gamma=0.8,
+        # loss-based stopping criteria
+        loss_tracker = StoppingTracker(
+            name="loss",
+            mode="improvement",
+            threshold=0.0005,  # 0.1% improvement is considered significant
+            direction="down",  # loss should decrease
             optimizer=optimizer,
+            lr_gamma=0.8,
+            lr_steps=5,
+            window_size=5,
+            patience=patience,
+            min_iterations=min_iterations,
             logging=logging,
-            verbosity=3, #self.verbosity,
-            prefix=f'[ROUND-{self.round+1}]'
+            verbosity=self.verbosity,
+            prefix=f'[ROUND-{self.round+1}]'  # Add prefix to log messages
         )
         
-        # function closure to evaluate degree-based stopping criterion
-        deg_stats = adict()
-        def max_degree(**kwargs):
-            degree_metric(model=self.model, X=self.full_x, Z=self.z, ret=deg_stats)
-            return deg_stats.max
-        
-        degree_tracker = StoppingCondition(
-            value=max_degree,
-            condition="x[-1] > t",
-            t=3,
-            interval=5,
-            min_iterations=min_iterations, # 50
-            logging=logging,
-            verbosity=3, #self.verbosity,
-            prefix=f'[ROUND-{self.round+1}]'
-        )
-        
-        stop_tracker = StoppingConditions([loss_tracker, degree_tracker])
+        # function closure to evaluate degree-based stopping criteria
+        stats = adict()
+        def degree_condition(model, X, Z, iter, interval, log):
+            if iter < min_iterations or iter % interval != 0:
+                return False
+            degree_metric(model=model, X=X, Z=Z, ret=stats)
+            stop = stats.max > 3 # or stats.mean > 3
+            if stop:
+                log(f'[ROUND-{self.round+1}]\tITER-{iter}/{self.max_iterations}\tStopping - high degree:\tMaxDeg={stats.max}\tMeanDeg={stats.mean}')
+            return stop
+        eval_degree = partial(degree_condition, model=self.model, X=self.full_x, Z=self.z, log=log, interval=5)
         
         #---------------------------------------------------------
-        
         # train loop
         for i in range(self.max_iterations):
             optimizer.zero_grad()
@@ -508,13 +485,16 @@ class BotorchSampler:
                     logging.error(f'error in loss calculation at iteration {i}:\n{e}')
                 return False
             loss.backward()
-        
-            if stop_tracker.step(loss=loss.item()):
+            
+            if eval_degree(iter=i):
+                break
+            
+            if loss_tracker.eval(loss.item()):
                 break
             
             optimizer.step()
             if i % self.log_interval == 0:
-                try: log(f'[ROUND-{self.round+1}]\tITER-{i}/{self.max_iterations}\tLoss: {loss.item():.4g}\tAvgDeg: {deg_stats.avg:.4g}\tMaxDeg: {deg_stats.max}\tMeanDeg: {deg_stats.mean}')
+                try: log(f'[ROUND-{self.round+1}]\tITER-{i}/{self.max_iterations}\tLoss: {loss.item():.4g}\tAvgDeg: {stats.avg:.4g}\tMaxDeg: {stats.max}\tMeanDeg: {stats.mean}')
                 # try: log(f'[ROUND-{self.round+1}]\tITER-{i}/{self.max_iterations}\tLoss: {loss.item():.4g}\tCurvature: {curvature:.4g}')
                 except: log(f'[ROUND-{self.round+1}]\tITER-{i}/{self.max_iterations}\tLoss: {loss.item():.4g}')    
                      

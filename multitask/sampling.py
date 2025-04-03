@@ -67,35 +67,35 @@ def maximize_min_dist(M, log=None):
     if log: log(f"OPTIMIZED starting samples - pairwise distance stats: min={min_dist(M)}\tmean={mean_dist(M):.4g}")
     return M
 
-def init_samples(K, Z, N, log=None, optimize=False):
+def init_samples(N, M, n_obs, log=None, optimize=False):
     """
-    Initialize samples for K checkpoints and Z tasks.
+    Initialize samples for N checkpoints and M tasks.
     
     Parameters:
-    K (int): Number of checkpoints
-    Z (int): Number of tasks
-    N (float):  if >=1, Initial number of observations (i.e. checkpoints) per task
+    N (int): Number of checkpoints
+    M (int): Number of tasks
+    n_obs (float):  if >=1, Initial number of observations (i.e. checkpoints) per task
                 if <1, Initial fraction of full sample space (KxZ)
     log (function, optional): Logging function to print messages
     """
-    if N >= 1:
-        if N < 2:
-            N = 2
-            if log: log('FYI: increasing N to 2 (minimum 2 obs/task allowed)')
-        m = ceil(N * Z)
+    if n_obs >= 1:
+        if n_obs < 2:
+            n_obs = 2
+            if log: log('FYI: increasing n_obs to 2 (minimum 2 obs/task allowed)')
+        m = ceil(n_obs * M)
     else:
-        min_frac = 2/K # == 2*Z/(K*Z)
-        if N < min_frac:
-            m = 2*Z
-            if log: log(f'FYI: increasing N to {min_frac:.4g} (minimum 2 obs/task allowed)')
+        min_frac = 2/N # == 2*M/(N*M)
+        if n_obs < min_frac:
+            m = 2*M
+            if log: log(f'FYI: increasing n_obs to {min_frac:.4g} (minimum 2 obs/task allowed)')
         else:
-            m = max(2*Z, ceil(N * K * Z))
-    if log: log(f'FYI: initializing sampler with {m} observations ( ~{m/(K*Z):.4g} of all obs, ~{m/Z:.4g} obs/task )\n')
+            m = max(2*M, ceil(n_obs * N * M))
+    if log: log(f'FYI: initializing sampler with {m} observations ( ~{m/(N*M):.4g} of all obs, ~{m/M:.4g} obs/task )\n')
     if log: log('-'*80)
     
-    tasks = list(range(Z))
-    checkpoints = list(range(K))
-    chk_tasks = [[] for _ in range(K)]
+    tasks = list(range(M))
+    checkpoints = list(range(N))
+    chk_tasks = [[] for _ in range(N)]
     n = 0
     while True:
         # select a random checkpoint
@@ -112,32 +112,23 @@ def init_samples(K, Z, N, log=None, optimize=False):
         tasks.remove(t)
         checkpoints.remove(k)
         if len(tasks) == 0:
-            tasks = list(range(Z)) # reset task list
+            tasks = list(range(M)) # reset task list
         if len(checkpoints) == 0:
-            checkpoints = list(range(K))
+            checkpoints = list(range(N))
     random.shuffle(chk_tasks)
     
-    # convert to x,y indices, and create a boolean matrix of size (K, Z)
-    # x,y = [],[]
-    M = np.zeros((K, Z), dtype=bool)
+    # convert to x,y indices, and create a boolean matrix of size (N, M)
+    S = np.zeros((N, M), dtype=bool)
     for i, tasks in enumerate(chk_tasks):
         for j in tasks:
-            M[i, j] = True
-    #         x.append(i)
-    #         y.append(j)
-    # x, y = np.array(x), np.array(y)
-    
-    # create a boolean matrix of size (K, Z)      
-    # M = np.zeros((K, Z), dtype=bool)
-    # for i, j in zip(x, y):
-    #     M[i, j] = True
+            S[i, j] = True
     
     # optimize the samples to increase the minimum distance between checkpoints within each task
     if optimize:
-        M = maximize_min_dist(M, log=log)
+        S = maximize_min_dist(S, log=log)
     
-    # use: X,Y = np.where(M)
-    return M
+    # use: X,Y = np.where(S)
+    return S
 
 def min_abs_diff(X, Y):
     """
@@ -166,12 +157,12 @@ def min_abs_diff(X, Y):
 #--------------------------------------------------------------
 if __name__ == "__main__":
 
-    K,Z = 120, 70
-    N = 2
+    N,M = 120, 70
+    n_obs = 2
 
-    M = init_samples(K, Z, N)
-    # X,Y = np.where(M)
+    S = init_samples(N, M, n_obs)
+    # X,Y = np.where(S)
     
-    print(M.sum(axis=0))
-    print(M.sum(axis=1))
-    print(M.sum())
+    print(S.sum(axis=0))
+    print(S.sum(axis=1))
+    print(S.sum())

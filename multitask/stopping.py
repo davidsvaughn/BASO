@@ -1,10 +1,11 @@
 import sys, os
 import numpy as np
 from functools import partial
+from utils import adict
 
-class StoppingTracker:
+class StoppingCondition:
     """
-    Track a moving average of values and detect when to trigger early stopping.
+    Track a moving average of values during training and decide when to stop.
     
     This class encapsulates the logic for monitoring a metric/loss and 
     determining when to stop training based on different patterns:
@@ -13,14 +14,13 @@ class StoppingTracker:
     """
     
     def __init__(self,
-                 interval=1,
-                 window_size=3, 
-                 patience=10,
+                 value=None, # either keyword (string) or function to evaluate
+                 condition=None, # condition to check for stopping : lambda function to call on self.average
+                 alpha=1, # smoothing factor for EMA (<1) or window size for moving average (1==no lookback)
+                 interval=1, # evaluate every n iterations
+                 patience=1,
                  min_iterations=100,
-                 name="metric",
-                 mode="direction",      # "direction" or "improvement"
-                 direction="up",        # "up" or "down"
-                 threshold=1.005,        # threshold factor for comparison
+                 t=None, # threshold factor for comparison
                  optimizer=None,
                  lr_gamma=0.5,
                  lr_steps=5,
@@ -31,180 +31,179 @@ class StoppingTracker:
                 ):
         """
         Initialize the early stopping tracker.
-        
-        Args:
-            window_size: Size of the moving average window
-            patience: Number of consecutive events to trigger stopping
-            min_iterations: Minimum iterations before allowing early stopping
-            name: Name of the metric being tracked (for logging)
-            mode: What to monitor:
-                  - "direction": Stop when moving average consistently moves in specified direction
-                  - "improvement": Stop when relative improvement is below threshold
-            direction: Which direction to monitor:
-                  - "up": Rising values (like accuracy increasing or loss getting worse)
-                  - "down": Falling values (like loss decreasing or accuracy getting worse)
-            threshold: 
-                  - For direction mode: Factor by which current average must differ from previous
-                  - For improvement mode: Relative improvement threshold to consider significant
+
         """
+        self.value = value
+        self.condition = condition
+        self.alpha = alpha
         self.interval = interval
-        self.window_size = window_size
         self.patience = patience
-        self.threshold = threshold
         self.min_iterations = min_iterations
-        self.name = name
+        self.threshold = t
         self.optimizer = optimizer
         self.lr_gamma = lr_gamma
         self.lr_steps = lr_steps
+        self.logging = logging
         self.prefix = f'{prefix.strip()}\t' if prefix is not None else ''
-        self.burnin = burnin if burnin is not None else window_size*2
+        self.burnin = burnin if burnin is not None else (alpha*2 if alpha>1 else min_iterations//10)
         self.verbosity = verbosity
         self.pfunc = partial(self._print, printer=logging.info if logging is not None else print)
         
-        # Validate and store parameters
-        if mode not in ["direction", "improvement"]:
-            raise ValueError("mode must be 'direction' or 'improvement'")
-        if direction not in ["up", "down"]:
-            raise ValueError("direction must be 'up' or 'down'")
-            
-        self.mode = mode
-        self.direction = direction
         self.history = []
+        self.average = None
+        self.message_log = []
+        self.iteration = 0
         self.consecutive_count = 0
         self.lr_step = 0
-        self.message_log = []
+        
+        # condition must be a string with 'x' as the variable, and optionally 't'
+        # when called, the following bindings:  x <- self.average
+        #                                       t <- self.threshold
+        self.test = lambda x,t: eval(condition)
+
+    @property
+    def name(self):
+        return self.value if isinstance(self.value, str) else self.value.__name__
         
     def _print(self, msg, verbosity_level=0, printer=print):
         """ Print message if verbosity level is sufficient. """
         if self.verbosity >= verbosity_level:
             printer(msg)
-        else:
-            self.message_log.append(msg)
-    
-    def eval(self, value):
-        """ Add a new value to the history.
-            Checks if early stopping is triggered, 
-            Otherwise triggers lr reduction if needed.
-            Returns True if early stopping is triggered, False otherwise.
-        """
-        self.history.append(value)
-        return self.check()
-    
-    def _get_average(self, offset=0):
-        """Get moving average with specified offset from the end."""
-        if len(self.history) >= self.window_size + offset:
-            end_idx = -offset if offset else None
-            return sum(self.history[-self.window_size-offset:end_idx]) / self.window_size
-        return None
-    
-    def _is_condition_met(self, current_avg, prev_avg):
-        """Check if the stopping condition is met based on monitoring type and direction."""
-        # Direction multiplier: 1 for "up", -1 for "down"
-        mult = 1 if self.direction == "up" else -1
-        
-        if self.mode == "direction":
-            # For direction mode: check if moving in specified direction beyond threshold
-            # For "up" direction: current > prev * threshold
-            # For "down" direction: current < prev / threshold
-            if self.direction == "up":
-                return current_avg > prev_avg * self.threshold
-            else:
-                return current_avg < prev_avg / self.threshold
-        else:  # "improvement" mode
-            # Calculate relative improvement
-            # For "up" direction (like accuracy): improvement = (current - prev) / |prev|
-            # For "down" direction (like loss): improvement = (prev - current) / |prev|
-            if prev_avg == 0:
-                rel_improvement = 0
-            else:
-                rel_improvement = mult * (current_avg - prev_avg) / abs(prev_avg)
-                
-            # Return True when improvement is BELOW threshold (not significant)
-            return rel_improvement < self.threshold
-    
-    def should_stop(self):
-        """Check if early stopping criteria are met."""
-        # Only check after collecting enough data points and exceeding minimum iterations
-        if len(self.history) < self.window_size + 1: #  or self.iteration < self.min_iterations:
-            return False
-        
-        # Get current and previous moving averages
-        current_avg = self._get_average()
-        prev_avg = self._get_average(offset=1)
-        
-        # Check if condition is met
-        if self._is_condition_met(current_avg, prev_avg):
-            self.consecutive_count += 1
-            if self.consecutive_count >= self.patience:
-                # return True
-                if self.iteration >= self.min_iterations:
-                    if self.mode == "improvement":
-                        self.pfunc(f"{self.prefix}Check failed: {self.name} stagnating for {self.patience} iterations.", 2)
-                    else: # mode == "direction"
-                        self.pfunc(f"{self.prefix}Check succeeded: {self.name} going {self.direction} for {self.patience} iterations.", 2)
-                    return True
-                return False
-        else:
-            self.consecutive_count = 0
+        # else:
+        self.message_log.append(msg)
             
-        # also check if trend is in right direction
-        if self.mode == "improvement" and self.iteration >= self.min_iterations:
-            if self.direction == "up":
-                if current_avg < prev_avg:
-                    self.pfunc(f"{self.prefix}Check failed: {self.name} is not going up consistently.", 2)
-                    return True
-            else:
-                if current_avg > prev_avg:
-                    self.pfunc(f"{self.prefix}Check failed: {self.name} is not going down consistently.", 2)
-                    return True
+    def _update(self, value):
+        """ Add value to history and update the moving average with a new value. """
+        self.history.append(value)
+        if len(self.history) == 1:
+            self.average = [value]
+            return
+        # update moving average
+        if self.alpha < 1:
+            # Exponential moving average
+            self.average += [self.alpha * value + (1 - self.alpha) * self.average[-1]]
+        else:
+            # Simple sliding window average
+            self.average += [np.mean(self.history[-self.alpha:])]
+
+    def _run_condition(self, **kwargs):
+        """ Run the condition function on the moving average. """
+        try:
+            success = self.test(self.average, self.threshold)#, **kwargs)
+        except IndexError as e:
+            # this happens when the moving average is empty
+            success = False
+            self.pfunc(f"{self.prefix}Error evaluating condition: {e}", 3)
+            # print(f"{self.prefix}Error evaluating condition '{self.condition}': {e}")
+            # print()
+        except Exception as e:
+            success = False
+            self.pfunc(f"{self.prefix}Error evaluating condition: {e}", 3)
+            print(f"{self.prefix}Error evaluating condition '{self.condition}': {e}")
+            print()
+        if success:
+            self.consecutive_count += 1
+            self.pfunc(f"{self.prefix}*{self.consecutive_count}/{self.patience}* '{self.name}': condition satisfied: '{self.condition}' ", 2)
+            return True
         return False
     
-    def check(self):
-        """Check if early stopping criteria are met and adjust learning rate if needed."""
-        if self.should_stop():
-            if self.optimizer is None or self.lr_step==self.lr_steps:
-                last_msg = self.message_log[-1] if self.message_log else ""
-                self.pfunc(f"{self.prefix}STOPPING : {last_msg}", 1)
-                return True
-            self.reduce_lr()
-        return False
-    
-    def reduce_lr(self):
-        """Reduce learning rate if optimizer is set."""
-        if self.optimizer is None or self.lr_step==self.lr_steps:
+    def _eval(self, **kwargs):
+        """ Add a new value to the history.
+            Evaluate if condition is met.
+        """
+        value = None
+        
+        # check if self.value is str
+        if isinstance(self.value, str):
+            # if self.value is str, assume it's a keyword in kwargs
+            # value = kwargs.get(self.value, None)
+            # pop it from kwargs if it exists
+            value = kwargs.pop(self.value, None)
+            
+        elif callable(self.value):
+            # if self.value is callable, call it with kwargs
+            if self.iteration>self.min_iterations and self.iteration%self.interval==0:
+                value = self.value(**kwargs)
+        
+        # if value is None, return False
+        if value is None:
             return False
-        self.lr_step += 1
-        for param_group in self.optimizer.param_groups:
-            param_group['lr'] *= self.lr_gamma
-            lr = param_group['lr']
-        self.pfunc(f"{self.prefix}Reduced learning rate to {lr:.4f}", 2)
+            
+        # store and update the moving average
+        self._update(value)
+        
+        # check if stop condition is met
+        if self.iteration>self.min_iterations and self.iteration%self.interval==0:
+            return self._run_condition(**kwargs)
+        return False
+    
+    def _reset(self, lr_step=None):
         self.consecutive_count = 0
         if self.iteration >= self.min_iterations:
             self.min_iterations = self.iteration + self.burnin
-        return True
+        if lr_step is not None:
+            self.lr_step = lr_step
     
-    @property
-    def latest_value(self):
-        """Get the most recent value in history."""
-        return self.history[-1] if self.history else None
+    def _reduce_lr(self, payload=None, **kwargs):
+        """Reduce learning rate if optimizer is set."""
+        if self.optimizer is None or self.lr_step==self.lr_steps:
+            return
+        
+        # check if lr was already reduced by another tracker
+        if payload is not None and 'lr_reduced' in payload and payload.lr_reduced:
+            return
+        
+        # reduce learning rate
+        self.lr_step += 1
+        if payload is not None:
+            payload.lr_reduced = True
+            payload.lr_step = self.lr_step
+            
+        for param_group in self.optimizer.param_groups:
+            param_group['lr'] *= self.lr_gamma
+            lr = param_group['lr']
+        self.pfunc(f"{self.prefix}*{self.lr_step}/{self.lr_steps}* Reduced learning rate to {lr:.4f}", 2)
+        self._reset()
     
-    @property
-    def latest_average(self):
-        """Get the most recent moving average."""
-        return self._get_average()
+    def check(self, i=1, **kwargs):
+        """ 
+        """
+        self.iteration += i
+        success = self._eval(**kwargs)
+        
+        if success:
+            # self.consecutive_count += 1
+            if self.consecutive_count >= self.patience:
+                if self.optimizer is None or self.lr_step==self.lr_steps:
+                    last_msg = self.message_log[-1] if self.message_log else ""
+                    self.pfunc(f"{self.prefix}STOPPING : {last_msg}", 1)
+                    return True
+                else:
+                    self._reduce_lr(**kwargs)
+        else:
+            self.consecutive_count = 0
+        return False
     
-    @property
-    def previous_average(self):
-        """Get the previous moving average."""
-        return self._get_average(offset=1)
+# 
+class StoppingConditions(StoppingCondition):
     
-    @property
-    def iteration(self):
-        """Get the current iteration count."""
-        return len(self.history) * self.interval
-    
-    def reset(self):
-        """Reset the tracker."""
-        self.history = []
-        self.consecutive_count = 0
-        return self
+    def __init__(self, trackers=[], **kwargs):
+        super().__init__(**kwargs)
+        self.trackers = trackers
+
+    def check(self, **kwargs):
+        payload = adict({'lr_reduced': False})
+        
+        for tracker in self.trackers:
+            if tracker.check(payload=payload, **kwargs):
+                # a stopping condition was met, no need to check others
+                return True
+        
+        # check if lr was reduced
+        if payload.lr_reduced:
+            # reset all trackers
+            for tracker in self.trackers:
+                tracker._reset(lr_step=payload.lr_step)
+        
+        # no stopping condition was met
+        return False
