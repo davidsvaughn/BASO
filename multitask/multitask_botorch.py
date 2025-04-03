@@ -36,7 +36,7 @@ rank_frac = -1
 # SET PARAMETERS
 
 fn = 'phi4-math-4claude.txt'
-# fn = 'phi4-bw-4claude.txt'
+fn = 'phi4-bw-4claude.txt'
 
 # select random subset of tasks
 task_sample = 1.0
