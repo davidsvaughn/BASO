@@ -30,7 +30,7 @@ from sampling import init_samples
 # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 torch.set_default_dtype(torch.float64)
 rand_seed = -1
-rank_frac = -1
+rank_fraction = -1
 
 #--------------------------------------------------------------------------
 # SET PARAMETERS
@@ -62,7 +62,7 @@ use_cuda = True
 # lkj prior
 eta = 0.25
 eta_gamma = 0.9
-rank_frac = 0.25
+rank_fraction = 0.25
 
 # Expected Improvement parameters
 use_ei = True
@@ -191,7 +191,7 @@ class BotorchSampler:
                  lr=0.1, # learning rate for MLE fit
                  patience=5,
                  max_sample_fraction=0.25, 
-                 rank_frac=0.5,
+                 rank_fraction=0.5,
                  eta=0.25,
                  eta_gamma=0.9,
                  ei_beta=0.5,
@@ -225,7 +225,7 @@ class BotorchSampler:
         self.min_iterations = min_iterations
         self.patience = patience
         self.max_sample_fraction = max_sample_fraction
-        self.rank_frac = rank_frac
+        self.rank_fraction = rank_fraction
         self.eta = eta
         self.eta_gamma = eta_gamma
         self.ei_beta = ei_beta
@@ -293,7 +293,7 @@ class BotorchSampler:
         y_train, self.Y_stand = Transform.standardize(x_train, y_train)
         
         # compute rank
-        rank = int(self.rank_frac * m) if self.rank_frac > 0 else None
+        rank = int(self.rank_fraction * m) if self.rank_fraction > 0 else None
         
         # init retry-adjusted parameters
         eta = self.eta
@@ -304,7 +304,7 @@ class BotorchSampler:
         # if fit is failing...
         if self.num_retries > 0:
             # rank adjustment...
-            if self.rank_frac > 0:
+            if self.rank_fraction > 0:
                 w = self.num_retries * (m-rank)//self.max_retries
                 rank = min(m, rank + w)
                 log(f'[ROUND-{self.round+1}]\tFYI: rank adjusted to {rank}', 2)
@@ -710,18 +710,17 @@ Y_test_reg = None
 Y_test_reg = Y_test.mean(axis=1) # shortcut (just take the mean across tasks)
 
 if Y_test_reg is None:
-    sampler = BotorchSampler(S=np.ones((N, M), dtype=bool),
-                            X_feats=X_feats, 
-                            Y_test=Y_test,
-                            lr=learning_rate,
-                            eta=None,
-                            max_iterations=1000,
-                            min_iterations=100,
-                            patience=10,
-                            rank_frac=0.5,
-                            log_interval=10,
-                            use_cuda=use_cuda,
-                            run_dir=run_dir)
+    sampler = BotorchSampler(X_feats, Y_test, 
+                             Y_test=Y_test,
+                             lr=learning_rate,
+                             eta=None,
+                             max_iterations=1000,
+                             min_iterations=100,
+                             patience=10,
+                             rank_fraction=0.5,
+                             log_interval=10,
+                             use_cuda=use_cuda,
+                             run_dir=run_dir)
     # Fit model to full dataset
     sampler.fit()
     Y_test_reg, _,_,_ = sampler.predict()
@@ -751,8 +750,7 @@ for _ in range(10):
         Y_obs[S] = Y_test[S]
             
         # Initialize the sampler
-        sampler = BotorchSampler(X_feats=X_feats,
-                                 Y_obs=Y_obs,
+        sampler = BotorchSampler(X_feats, Y_obs,
                                  Y_test=Y_test,
                                  lr=learning_rate,
                                  eta=eta,
@@ -763,7 +761,7 @@ for _ in range(10):
                                  max_retries=max_retries,
                                  verbosity=1,
                                  max_sample_fraction=max_sample_fraction, 
-                                 rank_frac=rank_frac,
+                                 rank_fraction=rank_fraction,
                                  log_interval=log_interval,
                                  use_cuda=use_cuda,
                                  run_dir=run_dir)

@@ -176,7 +176,7 @@ class StoppingCondition:
             if self.consecutive_count >= self.patience:
                 if self.optimizer is None or self.lr_step==self.lr_steps:
                     last_msg = self.message_log[-1] if self.message_log else ""
-                    self.pfunc(f"{self.prefix}STOPPING : {last_msg}", 1)
+                    self.pfunc(f"{self.prefix}STOPPING!\t{last_msg}", 1)
                     return True
                 else:
                     self._reduce_lr(**kwargs)
