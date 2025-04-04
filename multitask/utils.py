@@ -312,7 +312,7 @@ def empirical_bayes_std(y, Y):
 
 #--------------------------------------------------------------------------
 
-def task_standardize(Y, X):
+def task_standardize(X, Y):
     Y = Y.clone()
     t = X[:,1].long()
     means, stds, ys = [], [], []

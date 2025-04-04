@@ -1,5 +1,4 @@
 import sys, os
-import gpytorch.constraints
 import numpy as np
 import pandas as pd
 import random
@@ -24,6 +23,7 @@ from gpytorch.priors import LKJCovariancePrior, SmoothedBoxPrior
 
 from utils import task_standardize, display_fig, degree_metric, adict
 from utils import to_numpy, log_h, clear_cuda_tensors
+from normalize import Transform
 from stopping import StoppingCondition, StoppingConditions
 from sampling import init_samples
 
@@ -208,13 +208,13 @@ class BotorchSampler:
         self.Y_test = Y_test # 2D : ALL y values (optional)
         
         # normalize X_feats to unit interval [0..1]
-        self.x_width = X_feats.max() - X_feats.min()
-        self.x_min = X_feats.min()
-        self.X_test = (X_feats - self.x_min ) / self.x_width # min/max normalized
+        self.X_test, self.X_norm = Transform.normalize(X_feats)
         
+        # create X_inputs (dx2) that includes task indices
         all_idx = np.where(np.ones_like(Y_obs))
         self.X_inputs = torch.tensor([ [self.X_test[i], j] for i, j in  zip(*all_idx) ], dtype=torch.float64)
         
+        # create X_train (dx2) and Y_train (dx1) from observed data
         sample_idx = np.where(self.S)
         self.X_train = torch.tensor([ [self.X_test[i], j] for i, j in  zip(*sample_idx) ], dtype=torch.float64)
         self.Y_train = torch.tensor( Y_obs[sample_idx], dtype=torch.float64 ).unsqueeze(-1)
@@ -290,8 +290,7 @@ class BotorchSampler:
         m = self.S.shape[1]
         
         # standardize y_train
-        y_train, (t_mu, t_sig) = task_standardize(y_train, x_train)
-        self.t_mu, self.t_sig = t_mu, t_sig
+        y_train, self.Y_stand = Transform.standardize(x_train, y_train)
         
         # compute rank
         rank = int(self.rank_frac * m) if self.rank_frac > 0 else None
@@ -363,7 +362,7 @@ class BotorchSampler:
             optimizer=optimizer,
             logging=logging,
             verbosity=self.verbosity,
-            prefix=f'[ROUND-{self.round+1}]'
+            # prefix=f'[ROUND-{self.round+1}]'
         )
         
         # function closure to evaluate degree-based stopping criterion
@@ -381,7 +380,7 @@ class BotorchSampler:
             min_iterations=min_iterations, # 50
             logging=logging,
             verbosity=self.verbosity,
-            prefix=f'[ROUND-{self.round+1}]'
+            # prefix=f'[ROUND-{self.round+1}]'
         )
         
         # combine stopping conditions
@@ -438,11 +437,12 @@ class BotorchSampler:
         y_covar = to_numpy(y_covar.reshape((n, m, n, m)))
         
         # inverse standardize...
-        y_pred = y_pred * self.t_sig + self.t_mu
-        y_var = y_var * self.t_sig**2
+        y_pred = self.Y_stand.inv(y_pred)
+        sigma = self.Y_stand.params['sigma']
+        y_var = y_var * sigma**2
         y_sig = np.sqrt(y_var)
         y_mean = y_pred.mean(axis=1)
-        y_covar = y_covar * self.t_sig**2
+        y_covar = y_covar * sigma**2
         y_sigma = np.array([np.sqrt(y_covar[i,:,i].sum()) for i in range(n)]) / m
         
         # current max estimate
@@ -503,8 +503,8 @@ class BotorchSampler:
         # Plot training (observed) data as red circles
         idx = np.where(to_numpy(self.X_train)[:,1] == j)
         xx = to_numpy(self.X_train[idx][:,0])
-        # convert to original feature space
-        xx = xx * self.x_width + self.x_min
+        # transform to original feature space
+        xx = self.X_norm.inv(xx)
         yy = to_numpy(self.Y_train[idx])
         ax1.plot(xx, yy, 'ro')
         legend.append('Observed')
@@ -656,7 +656,7 @@ class BotorchSampler:
         
         # convert to original X feature space
         next_checkpoint = self.X_feats[next_i]
-        log(f'[ROUND-{self.round+1}]\tNEXT SAMPLE:\tCHECKPOINT-{next_checkpoint}\tTASK-{next_j})')
+        log(f'[ROUND-{self.round+1}]\tNEXT SAMPLE:\tCHECKPOINT-{next_checkpoint}\tTASK-{next_j}')
         
         # report task with most samples
         task_counts = np.sum(self.S, axis=0)
