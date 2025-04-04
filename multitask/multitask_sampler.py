@@ -6,6 +6,8 @@ warnings.filterwarnings("ignore", category=UserWarning, message=".*torch.cuda.*D
 warnings.filterwarnings("ignore", category=UserWarning, message=".*torch.sparse.SparseTensor.*")
 
 import numpy as np
+import os
+from datetime import datetime
 from scipy.stats import norm
 from matplotlib import pyplot as plt
 import torch
@@ -51,7 +53,6 @@ class MultiTaskSampler:
                  verbosity=1,
                  use_cuda=True,
                  run_dir=None,
-                 log=None,
                  ): 
         
         #--------------------------------------------------------------------------
@@ -83,11 +84,12 @@ class MultiTaskSampler:
         self.ei_beta = ei_beta
         self.ei_gamma = ei_gamma
         self.ei_decay = 1.0
-        self.log_interval = log_interval
         self.max_retries = max_retries
         self.verbosity = verbosity
         self.device = torch.device("cuda" if torch.cuda.is_available() and use_cuda else "cpu")
-        self.log = log
+        self.run_dir = run_dir
+        self.log_interval = log_interval
+        self.logger = logging.getLogger(__name__)
         
         if use_cuda:
             self.log(f'Using CUDA: {torch.cuda.is_available()}')
@@ -97,10 +99,13 @@ class MultiTaskSampler:
     
         self.X_inputs = self.X_inputs.to(self.device)
         self.n, self.m = Y_obs.shape
-        self.run_dir = run_dir
         self.round = 0
         self.reset()
         
+    def log(self, msg, verbosity_level=1):
+        if self.verbosity >= verbosity_level:
+            self.logger.info(msg)
+            
     def reset(self):
         self.num_retries = -1
     
@@ -163,10 +168,10 @@ class MultiTaskSampler:
             if self.rank_fraction > 0:
                 w = self.num_retries * (m-rank)//self.max_retries
                 rank = min(m, rank + w)
-                self.log(f'[ROUND-{self.round+1}]\tFYI: rank adjusted to {rank}', 2)
+                self.log(f'[ROUND-{self.round}]\tFYI: rank adjusted to {rank}', 2)
             # eta adjustment... ??
             eta = eta * (self.eta_gamma ** max(0, self.num_retries - self.max_retries//2))
-            self.log(f'[ROUND-{self.round+1}]\tFYI: eta adjusted to {eta:.4g}', 2)
+            self.log(f'[ROUND-{self.round}]\tFYI: eta adjusted to {eta:.4g}', 2)
             
             # patience, min_iterations adjustment...
             patience = max(5, patience - self.num_retries//2)
@@ -216,9 +221,9 @@ class MultiTaskSampler:
             lr_steps=5,
             lr_gamma=0.8,
             optimizer=optimizer,
-            logging=logging,
             verbosity=self.verbosity,
-            # prefix=f'[ROUND-{self.round+1}]'
+            # logging=logging,
+            # prefix=f'[ROUND-{self.round}]'
         )
         
         # function closure to evaluate degree-based stopping criterion
@@ -234,9 +239,9 @@ class MultiTaskSampler:
             t=3,
             interval=5,
             min_iterations=min_iterations, # 50
-            logging=logging,
             verbosity=self.verbosity,
-            # prefix=f'[ROUND-{self.round+1}]'
+            # logging=logging,
+            # prefix=f'[ROUND-{self.round}]'
         )
         
         # combine stopping conditions
@@ -252,9 +257,9 @@ class MultiTaskSampler:
                 loss = -mll(output, self.model.train_targets)
             except Exception as e:
                 if self.num_retries+1 == self.max_retries:
-                    logging.exception("An exception occurred")
+                    self.logger.exception("An exception occurred")
                 else:
-                    logging.error(f'error in loss calculation at iteration {i}:\n{e}')
+                    self.logger.error(f'error in loss calculation at iteration {i}:\n{e}')
                 return False
             loss.backward()
         
@@ -263,8 +268,8 @@ class MultiTaskSampler:
             
             optimizer.step()
             if i % self.log_interval == 0:
-                try: self.log(f'[ROUND-{self.round+1}]\tITER-{i}/{self.max_iterations}\tLoss: {loss.item():.4g}\tMaxDeg: {deg_stats.max}\tAvgDeg: {deg_stats.avg:.4g}')
-                except: self.log(f'[ROUND-{self.round+1}]\tITER-{i}/{self.max_iterations}\tLoss: {loss.item():.4g}')    
+                try: self.log(f'[ROUND-{self.round}]\tITER-{i}/{self.max_iterations}\tLoss: {loss.item():.4g}\tMaxDeg: {deg_stats.max}\tAvgDeg: {deg_stats.avg:.4g}')
+                except: self.log(f'[ROUND-{self.round}]\tITER-{i}/{self.max_iterations}\tLoss: {loss.item():.4g}')    
                      
         #---- end train loop --------------------------------------------------
         
@@ -321,8 +326,8 @@ class MultiTaskSampler:
         current_y_val = y_ref[self.current_best_idx]
         self.current_err = err = abs(current_y_val - y_ref_max)/y_ref_max
         self.log('-'*100)
-        self.log(f'[ROUND-{self.round+1}]\tSTATS\t{self.current_best_checkpoint}\t{current_y_val:.4f}\t{err:.4g}\t{self.sample_fraction:.4f}')
-        self.log(f'[ROUND-{self.round+1}]\tCURRENT BEST:\tCHECKPOINT-{self.current_best_checkpoint}\tY_PRED={current_y_val:.4f}\tY_ERR={100*err:.4g}%\t({100*self.sample_fraction:.2f}% sampled)')
+        self.log(f'[ROUND-{self.round}]\tSTATS\t{self.current_best_checkpoint}\t{current_y_val:.4f}\t{err:.4g}\t{self.sample_fraction:.4f}')
+        self.log(f'[ROUND-{self.round}]\tCURRENT BEST:\tCHECKPOINT-{self.current_best_checkpoint}\tY_PRED={current_y_val:.4f}\tY_ERR={100*err:.4g}%\t({100*self.sample_fraction:.2f}% sampled)')
         
     #-------------------------------------------------------------------------
     # Plotting functions
@@ -496,7 +501,7 @@ class MultiTaskSampler:
         # decay EI parameters
         self.ei_decay = self.ei_decay * self.ei_gamma
         self.ei_beta = self.ei_beta * self.ei_gamma
-        self.log(f'[ROUND-{self.round+1}]\tFYI: EI beta: {self.ei_beta:.4g}', 2)
+        self.log(f'[ROUND-{self.round}]\tFYI: EI beta: {self.ei_beta:.4g}', 2)
         
         #------------------------------------------------------------
         return next_i, next_j
@@ -512,13 +517,13 @@ class MultiTaskSampler:
         
         # convert to original X feature space
         next_checkpoint = self.X_feats[next_i]
-        self.log(f'[ROUND-{self.round+1}]\tNEXT SAMPLE:\tCHECKPOINT-{next_checkpoint}\tTASK-{next_j}')
+        self.log(f'[ROUND-{self.round}]\tNEXT SAMPLE:\tCHECKPOINT-{next_checkpoint}\tTASK-{next_j}')
         
         # report task with most samples
         task_counts = np.sum(self.S, axis=0)
         max_task = np.argmax(task_counts)
         max_count = task_counts[max_task]
-        self.log(f'[ROUND-{self.round+1}]\tFYI: TASK-{max_task} has most samples: {max_count}', 2)
+        self.log(f'[ROUND-{self.round}]\tFYI: TASK-{max_task} has most samples: {max_count}', 1)
         self.log('='*100)
         
         # return next sample point

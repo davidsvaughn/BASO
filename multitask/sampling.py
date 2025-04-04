@@ -90,7 +90,7 @@ def init_samples(N, M, n_obs, log=None, optimize=False):
             if log: log(f'FYI: increasing n_obs to {min_frac:.4g} (minimum 2 obs/task allowed)')
         else:
             m = max(2*M, ceil(n_obs * N * M))
-    if log: log(f'FYI: initializing sampler with {m} observations ( ~{m/(N*M):.4g} of all obs, ~{m/M:.4g} obs/task )\n')
+    if log: log(f'FYI: initializing sampler with {m} observations ( ~{m/(N*M):.4g} of all obs, ~{m/M:.4g} obs/task )')
     if log: log('-'*80)
     
     tasks = list(range(M))

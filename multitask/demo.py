@@ -106,36 +106,19 @@ os.system(f'cp {src} {dst}')
 
 #-----------------------------------------------------------------------
 # setup logging
-# log_file = os.path.join(run_dir, 'log.txt')
 log_file = os.path.join(run_dir, f'run_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log')
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s [%(levelname)s] %(message)s',
+    format='[%(levelname)s] %(message)s',
+    # format='%(asctime)s [%(levelname)s] %(message)s',
     handlers=[
         logging.FileHandler(log_file),
         logging.StreamHandler()  # This will print to console too
     ]
 )
-
-def log(msg, verbosity_level=1,
-        level=logging.INFO):
-    if verbosity_level > verbosity:
-        return
-    if level == logging.DEBUG:
-        logging.debug(msg)
-    elif level == logging.INFO:
-        logging.info(msg)
-    elif level == logging.WARNING:
-        logging.warning(msg)
-    elif level == logging.ERROR:
-        logging.error(msg)
-    elif level == logging.CRITICAL:
-        logging.critical(msg)
-    else:
-        raise ValueError(f'Unknown log level: {level}')
-    
-def warn(msg, verbosity_level=1, level=logging.WARNING):
-    log(msg, verbosity_level=verbosity_level, level=level)
+def log(msg, verbosity_level=1):
+    if verbosity >= verbosity_level:
+        logging.getLogger(__name__).info(msg)
     
 log('-'*100)
 log(f'Run directory: {run_dir}')
@@ -184,7 +167,7 @@ if Y_test_reg is None:
                                log_interval=10,
                                use_cuda=use_cuda,
                                run_dir=run_dir,
-                               log=log)
+                               )
     # Fit model to full dataset
     Y_test_reg, _,_,_ = sampler.update()
 
@@ -229,7 +212,7 @@ for _ in range(10):
                                    log_interval=log_interval,
                                    use_cuda=use_cuda,
                                    run_dir=run_dir,
-                                   log=log)
+                                   )
 
         # Fit model to initial samples
         sampler.update()
@@ -247,8 +230,8 @@ for _ in range(10):
         break
         
     except Exception as e:
-        log(f'ERROR: {e}')
-        log(traceback.format_exc())
+        logging.error(f'ERROR: {e}')
+        logging.error(traceback.format_exc())
         pass
 
 #--------------------------------------------------------------------------

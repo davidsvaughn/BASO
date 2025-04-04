@@ -2,6 +2,7 @@ import sys, os
 import numpy as np
 from functools import partial
 from utils import adict
+import logging
 
 class StoppingCondition:
     """
@@ -24,7 +25,6 @@ class StoppingCondition:
                  optimizer=None,
                  lr_gamma=0.5,
                  lr_steps=5,
-                 logging=None,
                  prefix=None,
                  burnin=None,
                  verbosity=1,
@@ -43,34 +43,40 @@ class StoppingCondition:
         self.optimizer = optimizer
         self.lr_gamma = lr_gamma
         self.lr_steps = lr_steps
-        self.logging = logging
         self.prefix = f'{prefix.strip()}\t' if prefix is not None else ''
         self.burnin = burnin if burnin is not None else (alpha*2 if alpha>1 else min_iterations//10)
         self.verbosity = verbosity
-        self.pfunc = partial(self._print, printer=logging.info if logging is not None else print)
         
         self.history = []
         self.average = None
-        self.message_log = []
         self.iteration = 0
         self.consecutive_count = 0
         self.lr_step = 0
+        
+        self.message_log = []
+        self.logger = logging.getLogger(__name__)
+        # self.pfunc = partial(self._print, printer=self.logger.info)
         
         # condition must be a string with 'x' as the variable, and optionally 't'
         # when called, the following bindings:  x <- self.average
         #                                       t <- self.threshold
         self.test = lambda x,t: eval(condition)
+    
+    def log(self, msg, verbosity_level=1):
+        self.message_log.append(msg)
+        if self.verbosity >= verbosity_level:
+            self.logger.info(msg)
+               
+    # def _print(self, msg, verbosity_level=0, printer=print):
+    #     """ Print message if verbosity level is sufficient. """
+    #     if self.verbosity >= verbosity_level:
+    #         printer(msg)
+    #     # else:
+    #     self.message_log.append(msg)
 
     @property
     def name(self):
         return self.value if isinstance(self.value, str) else self.value.__name__
-        
-    def _print(self, msg, verbosity_level=0, printer=print):
-        """ Print message if verbosity level is sufficient. """
-        if self.verbosity >= verbosity_level:
-            printer(msg)
-        # else:
-        self.message_log.append(msg)
             
     def _update(self, value):
         """ Add value to history and update the moving average with a new value. """
@@ -90,21 +96,23 @@ class StoppingCondition:
         """ Run the condition function on the moving average. """
         try:
             success = self.test(self.average, self.threshold)#, **kwargs)
+            
         except IndexError as e:
             # this happens when the moving average is empty
             success = False
-            self.pfunc(f"{self.prefix}Error evaluating condition: {e}", 3)
-            # print(f"{self.prefix}Error evaluating condition '{self.condition}': {e}")
-            # print()
+            self.log(f"{self.prefix}Error evaluating condition: {e}", 3)
+
         except Exception as e:
             success = False
-            self.pfunc(f"{self.prefix}Error evaluating condition: {e}", 3)
+            self.log(f"{self.prefix}Error evaluating condition: {e}", 3)
             print(f"{self.prefix}Error evaluating condition '{self.condition}': {e}")
             print()
+            
         if success:
             self.consecutive_count += 1
-            self.pfunc(f"{self.prefix}*{self.consecutive_count}/{self.patience}* '{self.name}': condition satisfied: '{self.condition}' ", 2)
+            self.log(f"{self.prefix}*{self.consecutive_count}/{self.patience}* '{self.name}': condition satisfied: '{self.condition}' ", 2)
             return True
+        
         return False
     
     def _eval(self, **kwargs):
@@ -162,7 +170,8 @@ class StoppingCondition:
         for param_group in self.optimizer.param_groups:
             param_group['lr'] *= self.lr_gamma
             lr = param_group['lr']
-        self.pfunc(f"{self.prefix}*{self.lr_step}/{self.lr_steps}* Reduced learning rate to {lr:.4f}", 2)
+            
+        self.log(f"{self.prefix}*{self.lr_step}/{self.lr_steps}* Reduced learning rate to {lr:.4f}", 2)
         self._reset()
     
     def check(self, i=1, **kwargs):
@@ -172,12 +181,14 @@ class StoppingCondition:
         success = self._eval(**kwargs)
         
         if success:
-            # self.consecutive_count += 1
+
             if self.consecutive_count >= self.patience:
+                
                 if self.optimizer is None or self.lr_step==self.lr_steps:
                     last_msg = self.message_log[-1] if self.message_log else ""
-                    self.pfunc(f"{self.prefix}STOPPING!\t{last_msg}", 1)
+                    self.log(f"{self.prefix}STOPPING!\t{last_msg}", 1)
                     return True
+                
                 else:
                     self._reduce_lr(**kwargs)
         else:
