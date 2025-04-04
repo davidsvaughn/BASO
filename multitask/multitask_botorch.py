@@ -50,7 +50,7 @@ n_obs    = 2
 # n_obs    = 0.04
 
 # stop BO sampling after this fraction of points are sampled
-max_sample = 0.1
+max_sample_fraction = 0.1
 
 # MLE estimation
 learning_rate = 0.1
@@ -73,7 +73,7 @@ ei_f, ei_t = 0.2, 0.05
 # ei_gamma = 0.9925
 
 # logging intervals
-log_interval = 5
+log_interval = 10
 verbosity = 1
 
 # compare_random = False
@@ -150,7 +150,7 @@ def log(msg, verbosity_level=1,
 def warn(msg, verbosity_level=1, level=logging.WARNING):
     log(msg, verbosity_level=verbosity_level, level=level)
     
-log('-'*80)
+log('-'*100)
 log(f'Run directory: {run_dir}')
 log(f'Random seed: {rand_seed}')
 
@@ -183,14 +183,14 @@ log(f'FYI: ei_gamma: {ei_gamma:.4g}')
 
 class BotorchSampler:
     def __init__(self,
-                 S,
-                 X_feats, 
-                 Y_test,
-                 lr=0.1, 
-                 max_iterations=1000,
+                 X_feats,
+                 Y_obs,
+                 Y_test=None,
                  min_iterations=50,
+                 max_iterations=1000,
+                 lr=0.1, # learning rate for MLE fit
                  patience=5,
-                 max_sample=0.25, 
+                 max_sample_fraction=0.25, 
                  rank_frac=0.5,
                  eta=0.25,
                  eta_gamma=0.9,
@@ -203,11 +203,11 @@ class BotorchSampler:
                  run_dir=None): 
         
         #--------------------------------------------------------------------------
-        self.S = S
-        self.X_feats = X_feats # original checkpoint numbers
-        self.Y_test = Y_test # original y values
+        self.X_feats = X_feats # original input feature space
+        self.Y_obs = Y_obs # observed y values
+        self.Y_test = Y_test # ALL y values (optional)
         
-        # normalize X_feats to unit interval
+        # normalize X_feats to unit interval [0..1]
         self.x_width = X_feats.max() - X_feats.min()
         self.x_min = X_feats.min()
         self.X_test = (X_feats - self.x_min ) / self.x_width # min/max normalized
@@ -224,7 +224,7 @@ class BotorchSampler:
         self.max_iterations = max_iterations
         self.min_iterations = min_iterations
         self.patience = patience
-        self.max_sample = max_sample
+        self.max_sample_fraction = max_sample_fraction
         self.rank_frac = rank_frac
         self.eta = eta
         self.eta_gamma = eta_gamma
@@ -254,19 +254,31 @@ class BotorchSampler:
         self.num_retries = -1
     
     @property
+    def S(self):
+        return ~np.isnan(self.Y_obs)
+    
+    @property
     def sample_fraction(self):
         return np.mean(self.S)
     
     # repeatedly attempt to fit model
     def fit(self):
+        # increment round
         self.round += 1
-        clear_cuda_tensors(logging)
+        
+        # reset next sample indices
+        self.next_i, self.next_j = None, None
+        
+        # log current sample fraction
+        clear_cuda_tensors(log = partial(log, verbosity_level=2))
+        
+        # run MLE fit loop
         for i in range(self.max_retries):
             if self._fit():
                 return True
             else:
                 if i+1 < self.max_retries:
-                    warn('-'*80)
+                    warn('-'*100)
                     warn(f'FAILED... ATTEMPT {i+2}')
         raise Exception('ERROR: Failed to fit model - max_retries reached')
     
@@ -296,10 +308,10 @@ class BotorchSampler:
             if self.rank_frac > 0:
                 w = self.num_retries * (m-rank)//self.max_retries
                 rank = min(m, rank + w)
-                log(f'[ROUND-{self.round+1}]\tFYI: rank adjusted to {rank}')
+                log(f'[ROUND-{self.round+1}]\tFYI: rank adjusted to {rank}', 2)
             # eta adjustment... ??
             eta = eta * (self.eta_gamma ** max(0, self.num_retries - self.max_retries//2))
-            log(f'[ROUND-{self.round+1}]\tFYI: eta adjusted to {eta:.4g}')
+            log(f'[ROUND-{self.round+1}]\tFYI: eta adjusted to {eta:.4g}', 2)
             
             # patience, min_iterations adjustment...
             patience = max(5, patience - self.num_retries//2)
@@ -452,9 +464,9 @@ class BotorchSampler:
         # ref_best_checkpoint = self.X_feats[i]
         current_y_val = y_ref[self.current_best_idx]
         self.current_err = err = abs(current_y_val - y_ref_max)/y_ref_max
-        log('-'*80)
+        log('-'*100)
         log(f'[ROUND-{self.round+1}]\tSTATS\t{self.current_best_checkpoint}\t{current_y_val:.4f}\t{err:.4g}\t{self.sample_fraction:.4f}')
-        log(f'[ROUND-{self.round+1}]\tCURRENT BEST\tCHECKPOINT-{self.current_best_checkpoint}\tY_PRED={current_y_val:.4f}\tY_ERR={100*err:.4g}%\t({100*self.sample_fraction:.2f}% sampled)')
+        log(f'[ROUND-{self.round+1}]\tCURRENT BEST:\tCHECKPOINT-{self.current_best_checkpoint}\tY_PRED={current_y_val:.4f}\tY_ERR={100*err:.4g}%\t({100*self.sample_fraction:.2f}% sampled)')
         
     #-------------------------------------------------------------------------
     # Plotting functions
@@ -463,7 +475,9 @@ class BotorchSampler:
         display_fig(self.run_dir, fig=fig, fn=fn)
     
     def plot_posterior_mean(self):
+        # true mean of all data (optional?)
         Y_test_mean = self.Y_test.mean(axis=1)
+        
         plt.figure(figsize=(15, 10))
         plt.plot(self.X_feats, self.y_mean, 'b')
         plt.fill_between(self.X_feats, self.y_mean - 2*self.y_sigma, self.y_mean + 2*self.y_sigma, alpha=0.5)
@@ -476,7 +490,7 @@ class BotorchSampler:
         fig, ax1 = plt.subplots(figsize=(15, 10))
         x = self.X_feats
         
-        # Plot all data as black stars
+        # Plot all data as black stars (optional?)
         ax1.plot(x, self.Y_test[:, j], 'k*')
         
         # Plot training (observed) data as red circles
@@ -556,7 +570,7 @@ class BotorchSampler:
         return K
     
     # compute expected improvement
-    def expected_improvement(self, beta=0.5, decay=1.0, debug=True):
+    def max_expected_improvement(self, beta=0.5, decay=1.0, debug=True):
         S_mu = self.y_pred.sum(axis=-1)
         S_max_idx = np.argmax(S_mu)
         S_max = S_mu[S_max_idx]
@@ -606,70 +620,103 @@ class BotorchSampler:
         # Assign computed values to valid positions and return
         EI[mask] = ei
         k = np.argmax(EI)
+        next_i, next_j = i_indices[k], j_indices[k]
         
         #-----------------------------------------------------------
-        # debugging
+        # debug
         if debug:
-            self.plot_task(j_indices[k], 'ORIGINAL', EI0.reshape(self.n, self.m)[:, j_indices[k]])
+            self.plot_task(next_j, 'ORIGINAL', EI0.reshape(self.n, self.m)[:, next_j])
+            self.plot_task(next_j, '(before)', EI.reshape(self.n, self.m)[:, next_j])
         #------------------------------------------------------------
         
-        return EI, EI[k], i_indices[k], j_indices[k]
-    
-    #----------------------------------------------------------------------
-    
-    # choose next sample
-    def sample_next(self):
-        # Expected Improvement
-        acq_values, max_val, next_i, next_j = self.expected_improvement(beta=self.ei_beta, decay=self.ei_decay)
+        # decay EI parameters
         self.ei_decay = self.ei_decay * self.ei_gamma
         self.ei_beta = self.ei_beta * self.ei_gamma
-        log(f'[ROUND-{self.round+1}]\tEI beta: {self.ei_beta:.4g}')
+        log(f'[ROUND-{self.round+1}]\tFYI: EI beta: {self.ei_beta:.4g}', 2)
         
-        # convert to original checkpoint numbers
+        #------------------------------------------------------------
+        return next_i, next_j
+    
+    #----------------------------------------------------------------------
+    # choose next sample
+    
+    def get_next_sample_point(self):
+        
+        # Maximize Expected Improvement acquisition function
+        next_i, next_j = self.max_expected_improvement(beta=self.ei_beta, decay=self.ei_decay)
+        self.next_i, self.next_j = next_i, next_j
+        
+        # convert to original X feature space
         next_checkpoint = self.X_feats[next_i]
+        log(f'[ROUND-{self.round+1}]\tNEXT SAMPLE:\tCHECKPOINT-{next_checkpoint}\tTASK-{next_j})')
         
-        log(f'[ROUND-{self.round+1}]\tNEXT SAMPLE\tCHECKPOINT-{next_checkpoint}\tTASK-{next_j}\t(acq_fxn_max={max_val:.3g})')
-        log('='*80)
-        
-        # plot task (before sampling)
-        self.plot_task(next_j, '(before)', acq_values.reshape(self.n, self.m)[:, next_j])
-        
-        # add new sample to training set (observe) and update mask 
-        self.X_train = torch.cat([self.X_train, torch.tensor([ [self.X_test[next_i], next_j] ], dtype=torch.float64)])
-        self.Y_train = torch.cat([self.Y_train, torch.tensor([self.Y_test[next_i, next_j]], dtype=torch.float64).unsqueeze(-1)])
-        self.S[next_i, next_j] = True
-        
-        # find task with most samples
+        # report task with most samples
         task_counts = np.sum(self.S, axis=0)
         max_task = np.argmax(task_counts)
         max_count = task_counts[max_task]
-        log(f'[ROUND-{self.round+2}]\tTASK-{max_task} has most samples: {max_count}')
+        log(f'[ROUND-{self.round+1}]\tFYI: TASK-{max_task} has most samples: {max_count}', 2)
+        log('='*100)
         
-        # return next sample
+        # return next sample point
+        return next_i, next_j
+    
+    
+    def add_next_sample(self, Y=None):
+        if Y is None:
+            Y = self.Y_test
+        if Y is None:
+            raise ValueError('Y is None, no data source for next sample')
+        
+        if self.next_i is None or self.next_j is None:
+            # check if Y is scalar value
+            if np.isscalar(Y):
+                raise ValueError('Y is a scalar value, but next sample point is not chosen yet')
+            self.get_next_sample_point()
+            
+        # get next sample indices
+        next_i, next_j = self.next_i, self.next_j
+        
+        # acquire next observation
+        if np.isscalar(Y):
+            y = Y
+        elif callable(Y):
+            # if y is callable function, then call it with next_i, next_j
+            y = Y(next_i, next_j)
+        else:
+            # else, access Y directly with next_i, next_j
+            y = Y[next_i][next_j]
+            
+        # add new sample to training set (observe) and update mask
+        self.X_train = torch.cat([self.X_train, torch.tensor([ [self.X_test[next_i], next_j] ], dtype=torch.float64)])
+        self.Y_train = torch.cat([self.Y_train, torch.tensor([y], dtype=torch.float64).unsqueeze(-1)])
+        self.S[next_i, next_j] = True
+        
+        # return next sample point
         return next_i, next_j
 
 
 #--------------------------------------------------------------------------
 # Train regression model on all data for gold standard
-# y_gold = Y_test.mean(axis=1) # shortcut
+Y_test_reg = None
 
-sampler = BotorchSampler(S=np.ones((N, M), dtype=bool),
-                         X_feats=X_feats, 
-                         Y_test=Y_test,
-                         lr=learning_rate,
-                         eta=None,
-                         max_iterations=1000,
-                         min_iterations=100,
-                         patience=10,
-                         rank_frac=0.5,
-                         log_interval=10,
-                         use_cuda=use_cuda,
-                         run_dir=run_dir)
+Y_test_reg = Y_test.mean(axis=1) # shortcut (just take the mean across tasks)
 
-# Fit model to full dataset
-sampler.fit()
-y_gold, _,_,_ = sampler.predict()
-
+if Y_test_reg is None:
+    sampler = BotorchSampler(S=np.ones((N, M), dtype=bool),
+                            X_feats=X_feats, 
+                            Y_test=Y_test,
+                            lr=learning_rate,
+                            eta=None,
+                            max_iterations=1000,
+                            min_iterations=100,
+                            patience=10,
+                            rank_frac=0.5,
+                            log_interval=10,
+                            use_cuda=use_cuda,
+                            run_dir=run_dir)
+    # Fit model to full dataset
+    sampler.fit()
+    Y_test_reg, _,_,_ = sampler.predict()
 
 #--------------------------------------------------------------------------
 
@@ -678,9 +725,10 @@ best_idx = np.argmax(Y_test.mean(axis=1))
 best_y_mean = Y_test.mean(axis=1)[best_idx]
 best_checkpoint = X_feats[best_idx]
 
-i = np.argmax(y_gold)
+i = np.argmax(Y_test_reg)
 regression_best_checkpoint = X_feats[i]
-regression_y_max = y_gold[i]
+regression_y_max = Y_test_reg[i]
+
 log(f'TRU BEST CHECKPOINT:\t{best_checkpoint}\tY={best_y_mean:.4f}')
 log(f'REF BEST CHECKPOINT:\t{regression_best_checkpoint}\tY={regression_y_max:.4f}')
 
@@ -691,10 +739,19 @@ for _ in range(10):
     try:
         # Subsample data
         S = init_samples(N, M, n_obs, log=log)
+        
+        # create 2d matrix of sampled points from Y_test, == np.nan wherever S==False
+        Y_obs = np.full(S.shape, np.nan)
+        Y_obs[S] = Y_test[S]
+        
+        s = ~np.isnan(Y_obs)
+        
+        # assert S and s are the same
+        assert np.all(S == s), f'ERROR: S and s are not the same:\n{S}\n{s}'
             
         # Initialize the sampler
-        sampler = BotorchSampler(S=S,
-                                 X_feats=X_feats, 
+        sampler = BotorchSampler(X_feats=X_feats,
+                                 Y_obs=Y_obs,
                                  Y_test=Y_test,
                                  lr=learning_rate,
                                  eta=eta,
@@ -704,7 +761,7 @@ for _ in range(10):
                                  max_iterations=max_iterations,
                                  max_retries=max_retries,
                                  verbosity=1,
-                                 max_sample=max_sample, 
+                                 max_sample_fraction=max_sample_fraction, 
                                  rank_frac=rank_frac,
                                  log_interval=log_interval,
                                  use_cuda=use_cuda,
@@ -713,15 +770,15 @@ for _ in range(10):
         # Fit model to initial samples
         sampler.fit()
         sampler.predict()
-        sampler.compare(y_gold)
+        sampler.compare(Y_test_reg)
         # sampler.plot_all(max_fig=10)
 
         # Run Bayesian optimization loop
-        while sampler.sample_fraction < max_sample:
-            _, next_task = sampler.sample_next()
+        while sampler.sample_fraction < max_sample_fraction:
+            _, next_task = sampler.add_next_sample()
             sampler.fit()
             sampler.predict()
-            sampler.compare(y_gold)
+            sampler.compare(Y_test_reg)
             sampler.plot_task(next_task, '(after)')
             sampler.plot_posterior_mean()
             

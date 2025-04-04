@@ -380,7 +380,7 @@ def search_attr(obj, attr, default=0):
 
 #--------------------------------------------------------------------------
 
-def clear_cuda_tensors(logging=None, target_size=None): # (1, 8192, 32, 96)
+def clear_cuda_tensors(log=None, target_size=None): # (1, 8192, 32, 96)
     """Clear tensors of specific size from memory"""
     if not torch.cuda.is_available():
         return
@@ -396,8 +396,8 @@ def clear_cuda_tensors(logging=None, target_size=None): # (1, 8192, 32, 96)
     torch.cuda.empty_cache()
     gc.collect()
     msg = f"Cleared {count} tensors of size {target_size}" if target_size is not None else f"Cleared {count} tensors"
-    if logging is not None:
-        logging.info(msg)
+    if log is not None:
+        log(msg)
     else:
         print(msg)
     
