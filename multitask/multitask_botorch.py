@@ -203,21 +203,21 @@ class BotorchSampler:
                  run_dir=None): 
         
         #--------------------------------------------------------------------------
-        self.X_feats = X_feats # original input feature space
-        self.Y_obs = Y_obs # observed y values
-        self.Y_test = Y_test # ALL y values (optional)
+        self.X_feats = X_feats # 1D : original input feature space
+        self.Y_obs = Y_obs # 2D : observed y values (np.nan everywhere else)
+        self.Y_test = Y_test # 2D : ALL y values (optional)
         
         # normalize X_feats to unit interval [0..1]
         self.x_width = X_feats.max() - X_feats.min()
         self.x_min = X_feats.min()
         self.X_test = (X_feats - self.x_min ) / self.x_width # min/max normalized
         
-        all_idx = np.where(np.ones_like(S))
+        all_idx = np.where(np.ones_like(Y_obs))
         self.X_inputs = torch.tensor([ [self.X_test[i], j] for i, j in  zip(*all_idx) ], dtype=torch.float64)
         
-        sample_idx = np.where(S)
+        sample_idx = np.where(self.S)
         self.X_train = torch.tensor([ [self.X_test[i], j] for i, j in  zip(*sample_idx) ], dtype=torch.float64)
-        self.Y_train = torch.tensor( Y_test[sample_idx], dtype=torch.float64 ).unsqueeze(-1)
+        self.Y_train = torch.tensor( Y_obs[sample_idx], dtype=torch.float64 ).unsqueeze(-1)
 
         #--------------------------------------------------
         self.lr = lr
@@ -243,7 +243,7 @@ class BotorchSampler:
         log(f'Using device: {self.device}')
     
         self.X_inputs = self.X_inputs.to(self.device)
-        self.n, self.m = S.shape
+        self.n, self.m = Y_obs.shape
         self.run_dir = run_dir
         if run_dir is not None:
             plt.ioff()
@@ -475,39 +475,48 @@ class BotorchSampler:
         display_fig(self.run_dir, fig=fig, fn=fn)
     
     def plot_posterior_mean(self):
-        # true mean of all data (optional?)
-        Y_test_mean = self.Y_test.mean(axis=1)
-        
         plt.figure(figsize=(15, 10))
         plt.plot(self.X_feats, self.y_mean, 'b')
         plt.fill_between(self.X_feats, self.y_mean - 2*self.y_sigma, self.y_mean + 2*self.y_sigma, alpha=0.5)
-        plt.plot(self.X_feats, Y_test_mean, 'r')
-        plt.legend(['Posterior Mean', 'Confidence', 'True Mean'])
+        
+        # true mean of all data (optional?)
+        if self.Y_test is not None:
+            Y_test_mean = self.Y_test.mean(axis=1)
+            plt.plot(self.X_feats, Y_test_mean, 'r')
+            plt.legend(['Posterior Mean', 'Confidence', 'True Mean'])
+        else:
+            plt.legend(['Posterior Mean', 'Confidence'])
+            
         plt.title(f'Round: {self.round} - Current Best Checkpoint: {self.current_best_checkpoint}')
         self.display()
         
     def plot_task(self, j, msg='', fvals=None):
         fig, ax1 = plt.subplots(figsize=(15, 10))
         x = self.X_feats
+        legend = []
         
         # Plot all data as black stars (optional?)
-        ax1.plot(x, self.Y_test[:, j], 'k*')
+        if self.Y_test is not None:
+            ax1.plot(x, self.Y_test[:, j], 'k*')
+            legend.append('Unobserved')
         
         # Plot training (observed) data as red circles
         idx = np.where(to_numpy(self.X_train)[:,1] == j)
         xx = to_numpy(self.X_train[idx][:,0])
-        
-        # inverse normalize x
+        # convert to original feature space
         xx = xx * self.x_width + self.x_min
         yy = to_numpy(self.Y_train[idx])
         ax1.plot(xx, yy, 'ro')
+        legend.append('Observed')
         
         # Plot predictive means as blue line
         ax1.plot(x, self.y_pred[:, j], 'b')
+        legend.append('Posterior Mean')
         
         # confidences
         win = 2 * self.y_sig[:, j]
         ax1.fill_between(x, self.y_pred[:, j] - win, self.y_pred[:, j] + win, alpha=0.5)
+        legend.append('Confidence')
         
         # Set up primary y-axis labels
         ax1.set_xlabel('X')
@@ -521,14 +530,13 @@ class BotorchSampler:
             ax2.plot(x, fvals, 'g--')
             ax2.set_ylabel('Acquisition Function Value', color='g')
             ax2.tick_params(axis='y', labelcolor='g')
+            legend.append('EI')
             
             # Create custom legend with all elements
-            ax1.legend(
-                ['Unobserved', 'Observed', 'Posterior Mean', 'Confidence', 'AcqFxn'],
-                loc='best'
-            )
-        else:
-            ax1.legend(['Unobserved', 'Observed', 'Posterior Mean', 'Confidence'])
+            # ax1.legend(legend, loc='best')
+        # else:
+            # ax1.legend(['Unobserved', 'Observed', 'Posterior Mean', 'Confidence'])
+        ax1.legend(legend, loc='best')
         
         plt.title(f'Round: {self.round} - Task: {j} {msg}')
         plt.tight_layout()  # Adjust layout to make room for the second y-axis label
@@ -689,7 +697,7 @@ class BotorchSampler:
         # add new sample to training set (observe) and update mask
         self.X_train = torch.cat([self.X_train, torch.tensor([ [self.X_test[next_i], next_j] ], dtype=torch.float64)])
         self.Y_train = torch.cat([self.Y_train, torch.tensor([y], dtype=torch.float64).unsqueeze(-1)])
-        self.S[next_i, next_j] = True
+        self.Y_obs[next_i, next_j] = y
         
         # return next sample point
         return next_i, next_j
@@ -739,15 +747,8 @@ for _ in range(10):
     try:
         # Subsample data
         S = init_samples(N, M, n_obs, log=log)
-        
-        # create 2d matrix of sampled points from Y_test, == np.nan wherever S==False
         Y_obs = np.full(S.shape, np.nan)
         Y_obs[S] = Y_test[S]
-        
-        s = ~np.isnan(Y_obs)
-        
-        # assert S and s are the same
-        assert np.all(S == s), f'ERROR: S and s are not the same:\n{S}\n{s}'
             
         # Initialize the sampler
         sampler = BotorchSampler(X_feats=X_feats,
