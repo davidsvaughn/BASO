@@ -6,32 +6,41 @@ warnings.filterwarnings("ignore", category=UserWarning, message=".*torch.cuda.*D
 warnings.filterwarnings("ignore", category=UserWarning, message=".*torch.sparse.SparseTensor.*")
 
 import numpy as np
-import os
-from datetime import datetime
-from scipy.stats import norm
+# import os
+# from datetime import datetime
+# from scipy.stats import norm
 from matplotlib import pyplot as plt
 import torch
 import gpytorch
 import logging
 import math
+import time
 from scipy.stats import gaussian_kde
-from math import ceil
-from glob import glob
+# from math import ceil
+# from glob import glob
 from functools import partial
 
 from botorch.models import MultiTaskGP
 from gpytorch.priors import LKJCovariancePrior, SmoothedBoxPrior
 
-from utils import task_standardize, display_fig, degree_metric, adict
-from utils import to_numpy, log_h, clear_cuda_tensors
-from normalize import Transform
+from utils import adict, display_fig, to_numpy, log_h, clear_cuda_tensors
 from stopping import StoppingCondition, StoppingConditions
-from sampling import init_samples
+from normalize import Transform
+from degree import degree_metric
 
 # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 torch.set_default_dtype(torch.float64)
 
 #----------------------------------------------------------------------
+
+"""
+Bayesian Optimization with Multi-Task Gaussian Processes
+
+
+see: https://botorch.readthedocs.io/en/latest/models.html#botorch.models.multitask.MultiTaskGP
+
+"""
+
 
 class MultiTaskSampler:
     def __init__(self,
@@ -72,7 +81,7 @@ class MultiTaskSampler:
         self.X_train = torch.tensor([ [self.X_test[i], j] for i, j in  zip(*sample_idx) ], dtype=torch.float64)
         self.Y_train = torch.tensor( Y_obs[sample_idx], dtype=torch.float64 ).unsqueeze(-1)
 
-        #--------------------------------------------------
+        #--------------------------------------------------------------------------
         self.lr = lr
         self.max_iterations = max_iterations
         self.min_iterations = min_iterations
@@ -98,9 +107,11 @@ class MultiTaskSampler:
         self.log(f'Using device: {self.device}')
     
         self.X_inputs = self.X_inputs.to(self.device)
-        self.n, self.m = Y_obs.shape
         self.round = 0
         self.reset()
+        
+        # get dimensions of Y_obs (n x m): n = number of x_features, m = number of tasks
+        self.n, self.m = Y_obs.shape
         
     def log(self, msg, verbosity_level=1):
         if self.verbosity >= verbosity_level:
@@ -111,10 +122,18 @@ class MultiTaskSampler:
     
     @property
     def S(self):
+        """
+        S is a boolean matrix of size (n, m) storing True for 
+        sampled (observed) points and False for unobserved points.
+        """
         return ~np.isnan(self.Y_obs)
     
     @property
     def sample_fraction(self):
+        """
+        sample_fraction is the fraction of the total number 
+        of data points that have been sampled so far.
+        """
         return np.mean(self.S)
     
     # fit model and update posterior predictions
@@ -130,7 +149,7 @@ class MultiTaskSampler:
         # reset next sample indices
         self.next_i, self.next_j = None, None
         
-        # log current sample fraction
+        # clear CUDA tensors
         clear_cuda_tensors(log = partial(self.log, verbosity_level=2))
         
         # run MLE fit loop
@@ -164,11 +183,13 @@ class MultiTaskSampler:
         #---------------------------------------------------------------------
         # if fit is failing...
         if self.num_retries > 0:
+            
             # rank adjustment...
             if self.rank_fraction > 0:
                 w = self.num_retries * (m-rank)//self.max_retries
                 rank = min(m, rank + w)
                 self.log(f'[ROUND-{self.round}]\tFYI: rank adjusted to {rank}', 2)
+                
             # eta adjustment... ??
             eta = eta * (self.eta_gamma ** max(0, self.num_retries - self.max_retries//2))
             self.log(f'[ROUND-{self.round}]\tFYI: eta adjusted to {eta:.4g}', 2)
@@ -211,26 +232,29 @@ class MultiTaskSampler:
         #---------------------------------------------------------
         # stopping criteria
         
+        #-----------------------------------
+        # relative change stopping criterion
         loss_condition = StoppingCondition(
             value="loss",
             condition="0 < (x[-2] - x[-1])/abs(x[-2]) < t",
             t=0.0005,
             alpha=5,
-            min_iterations=min_iterations, # 50
-            patience=patience, # 5
+            min_iterations=min_iterations,
+            patience=patience,
             lr_steps=5,
             lr_gamma=0.8,
             optimizer=optimizer,
             verbosity=self.verbosity,
-            # logging=logging,
-            # prefix=f'[ROUND-{self.round}]'
         )
         
-        # function closure to evaluate degree-based stopping criterion
+        #-----------------------------------
+        # max-degree stopping criterion
+        
+        # function closure for degree metric
         deg_stats = adict()
         def max_degree(**kwargs):
             nonlocal deg_stats
-            degree_metric(model=self.model, X_inputs=self.X_inputs, m=self.m, ret=deg_stats)
+            degree_metric(model=self.model, X_inputs=self.X_inputs, m=self.m, ret=deg_stats, num_trials=200)
             return deg_stats.max
         
         degree_condition = StoppingCondition(
@@ -238,21 +262,23 @@ class MultiTaskSampler:
             condition="x[-1] > t",
             t=3,
             interval=5,
-            min_iterations=min_iterations, # 50
+            min_iterations=min_iterations,
             verbosity=self.verbosity,
-            # logging=logging,
-            # prefix=f'[ROUND-{self.round}]'
         )
         
-        # combine stopping conditions
-        stop_conditions = StoppingConditions([loss_condition, degree_condition])
+        #------------------------------------
+        # combine stopping conditions (at least one must be satisfied)
+        stop_conditions = StoppingConditions([loss_condition, degree_condition], mode='any')
         
         #---------------------------------------------------------
+        
+        start_time = time.time()
         
         # train loop
         for i in range(self.max_iterations):
             optimizer.zero_grad()
             output = self.model(x_train)
+            
             try:
                 loss = -mll(output, self.model.train_targets)
             except Exception as e:
@@ -261,15 +287,20 @@ class MultiTaskSampler:
                 else:
                     self.logger.error(f'error in loss calculation at iteration {i}:\n{e}')
                 return False
+            
             loss.backward()
         
             if stop_conditions.check(loss=loss.item()):
                 break
             
             optimizer.step()
+            
             if i % self.log_interval == 0:
-                try: self.log(f'[ROUND-{self.round}]\tITER-{i}/{self.max_iterations}\tLoss: {loss.item():.4g}\tMaxDeg: {deg_stats.max}\tAvgDeg: {deg_stats.avg:.4g}')
-                except: self.log(f'[ROUND-{self.round}]\tITER-{i}/{self.max_iterations}\tLoss: {loss.item():.4g}')    
+                iter_per_sec = self.log_interval/(time.time() - start_time)
+                start_time = time.time()
+                
+                try: self.log(f'[ROUND-{self.round}]\tITER-{i}/{self.max_iterations}\tLoss: {loss.item():.4g}\tMaxDeg: {deg_stats.max}\tAvgDeg: {deg_stats.avg:.4g}\tit/s: {iter_per_sec:.2g}')
+                except: self.log(f'[ROUND-{self.round}]\tITER-{i}/{self.max_iterations}\tLoss: {loss.item():.4g}\tit/s: {iter_per_sec:.2g}')   
                      
         #---- end train loop --------------------------------------------------
         

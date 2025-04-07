@@ -106,7 +106,9 @@ class Transform:
     
     @staticmethod
     def task_standardize(X, Y):
-        # Y = Y.clone()
+        """
+        Create task-wise standardization transform (one transform per task).
+        """
         t = X[:,1].long()
         means, stds, ys = [], [], []
         m = t.max() + 1
@@ -117,11 +119,11 @@ class Transform:
             ys.append(yc)
             means.append(mu)
         means = np.array(means)
-        #-----------------------------------
+        
+        # calculate stds using the pooled population data (when sparse)
         yy = torch.cat(ys).numpy()
         stds = np.array([bayesian_std(y.numpy(), yy) for y in ys])
-        # stds = np.array([empirical_bayes_std(y.numpy(), yy) for y in ys])
-        #-----------------------------------
+        
         # actually perform the standardization
         Y_std = Y.clone()
         for i in range(m):

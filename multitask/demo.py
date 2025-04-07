@@ -9,8 +9,8 @@ from datetime import datetime
 from glob import glob
 import traceback
 
-from sampling import init_samples
-from multitask_sampler import MultiTaskSampler
+from initialize import init_samples
+from sampler import MultiTaskSampler
 
 torch.set_default_dtype(torch.float64)
 rand_seed = -1
@@ -52,7 +52,7 @@ rank_fraction = 0.25
 use_ei = True
 use_logei = True
 ei_beta = 0.5
-# beta will be ei_f of its start value when ei_t of all points have been sampled
+# ei_beta will be ei_f of its start value when ei_t of all points have been sampled
 ei_f, ei_t = 0.2, 0.05
 # ei_gamma = 0.9925
 

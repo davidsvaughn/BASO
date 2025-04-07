@@ -25,7 +25,7 @@ from gpytorch.priors import LKJCovariancePrior, SmoothedBoxPrior
 from utils import task_standardize, display_fig, curvature_metric, degree_metric, adict
 from utils import to_numpy, log_h, clear_cuda_tensors
 from stopping import StoppingTracker
-from sampling import init_samples
+from multitask.initialize import init_samples
 
 # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 torch.set_default_dtype(torch.float64)

@@ -46,37 +46,28 @@ class StoppingCondition:
         self.prefix = f'{prefix.strip()}\t' if prefix is not None else ''
         self.burnin = burnin if burnin is not None else (alpha*2 if alpha>1 else min_iterations//10)
         self.verbosity = verbosity
-        
+
         self.history = []
-        self.average = None
+        self.average = None # moving average
         self.iteration = 0
         self.consecutive_count = 0
         self.lr_step = 0
-        
         self.message_log = []
         self.logger = logging.getLogger(__name__)
-        # self.pfunc = partial(self._print, printer=self.logger.info)
         
         # condition must be a string with 'x' as the variable, and optionally 't'
-        # when called, the following bindings:  x <- self.average
-        #                                       t <- self.threshold
+        # when called, the following bindings are used: x <- self.average
+        #                                               t <- self.threshold
         self.test = lambda x,t: eval(condition)
+    
+    @property
+    def name(self):
+        return self.value if isinstance(self.value, str) else self.value.__name__
     
     def log(self, msg, verbosity_level=1):
         self.message_log.append(msg)
         if self.verbosity >= verbosity_level:
             self.logger.info(msg)
-               
-    # def _print(self, msg, verbosity_level=0, printer=print):
-    #     """ Print message if verbosity level is sufficient. """
-    #     if self.verbosity >= verbosity_level:
-    #         printer(msg)
-    #     # else:
-    #     self.message_log.append(msg)
-
-    @property
-    def name(self):
-        return self.value if isinstance(self.value, str) else self.value.__name__
             
     def _update(self, value):
         """ Add value to history and update the moving average with a new value. """
@@ -84,7 +75,8 @@ class StoppingCondition:
         if len(self.history) == 1:
             self.average = [value]
             return
-        # update moving average
+        
+        # Update the moving average
         if self.alpha < 1:
             # Exponential moving average
             self.average += [self.alpha * value + (1 - self.alpha) * self.average[-1]]
@@ -175,7 +167,21 @@ class StoppingCondition:
         self._reset()
     
     def check(self, i=1, **kwargs):
-        """ 
+        """
+        Check if the stopping condition is met, and if so, how many times it has been met.
+        If the number of times is less than patience, reduce the learning rate.
+        If the number of times is greater than patience, stop training.
+        
+        Parameters:
+        ----------
+        i : int
+            Number of iterations that have passed.
+        kwargs : dict
+            Additional keyword arguments to pass to the condition function.
+        Returns:
+        -------
+        bool
+            True if the stopping condition is met, False otherwise.
         """
         self.iteration += i
         success = self._eval(**kwargs)
@@ -197,18 +203,45 @@ class StoppingCondition:
     
 # 
 class StoppingConditions(StoppingCondition):
+    """
+    A class to manage multiple stopping conditions.
+    This class allows for the combination of multiple stopping conditions
+    using logical 'and' or 'or' operations.
     
-    def __init__(self, trackers=[], **kwargs):
+    Parameters:
+    ----------
+    trackers : list
+        List of StoppingCondition instances to track.
+    mode : str
+        Mode of operation: 'any' or 'all'.
+        - 'any': Stop if any tracker meets its condition.
+        - 'all': Stop only if all trackers meet their conditions.
+    kwargs : dict
+        Additional keyword arguments for StoppingCondition.
+    """
+    
+    def __init__(self, trackers=[], mode='any', **kwargs):
         super().__init__(**kwargs)
         self.trackers = trackers
+        self.mode = mode
 
     def check(self, **kwargs):
         payload = adict({'lr_reduced': False})
         
+        stop = True if self.mode == 'all' else False
         for tracker in self.trackers:
             if tracker.check(payload=payload, **kwargs):
-                # a stopping condition was met, no need to check others
-                return True
+                if self.mode == 'any':
+                    # a stopping condition was met, no need to check others
+                    return True
+            elif self.mode == 'all':
+                # if any tracker did not meet the condition, stop checking
+                stop = False
+                
+        # if mode is 'all' and all trackers met the condition, return True
+        if stop:
+            # all stopping conditions were met (mode = 'all')
+            return True
         
         # check if lr was reduced
         if payload.lr_reduced:

@@ -5,7 +5,7 @@ import torch
 import math
 from functools import partial
 import gpytorch
-from crossing import count_line_curve_intersections_vectorized
+# from degree import count_line_curve_intersections_vectorized
 import matplotlib.pyplot as plt
 
 torch.set_default_dtype(torch.float64)
@@ -41,26 +41,6 @@ def to_adict(d):
     else:
         return d
     
-# def copy_adict(src, dst):
-#     """
-#     Recursively copy attributes from src to dst.
-    
-#     Parameters:
-#     src (adict): Source dictionary
-#     dst (adict): Destination dictionary
-#     """
-#     for key, value in src.items():
-#         if isinstance(value, dict):
-#             if key not in dst:
-#                 dst[key] = adict()
-#             copy_adict(value, dst[key])
-#         else:
-#             if key not in dst:
-#                 dst[key] = value
-#             else:
-#                 # only copy if the value is different
-#                 if dst[key] != value:
-#                     print(f"Warning: {key} already exists in destination dictionary.")
 
 #--------------------------------------------------------------------------
 
@@ -88,70 +68,69 @@ def display_fig(run_dir, fig=None, fn=None):
         
 #--------------------------------------------------------------------------
 
-                
-# degree metric
-def degree_metric(model, X_inputs, 
-                  m=None, 
-                  num_trials=500, 
-                  mean_max=None,
-                  max_max=None,
-                  ret=None,
-                  verbose=False):
-    if m is None:
-        m = int(X_inputs[:,1].max().item() + 1)
-    model.eval()
-    model.likelihood.eval()
-    with torch.no_grad(), gpytorch.settings.fast_pred_var():
-        pred = model.likelihood(model(X_inputs))
-    mean = pred.mean.reshape(-1, m)
-    model.train()
-    model.likelihood.train()
+# # degree metric
+# def degree_metric(model, X_inputs, 
+#                   m=None, 
+#                   num_trials=500, 
+#                   mean_max=None,
+#                   max_max=None,
+#                   ret=None,
+#                   verbose=False):
+#     if m is None:
+#         m = int(X_inputs[:,1].max().item() + 1)
+#     model.eval()
+#     model.likelihood.eval()
+#     with torch.no_grad(), gpytorch.settings.fast_pred_var():
+#         pred = model.likelihood(model(X_inputs))
+#     mean = pred.mean.reshape(-1, m)
+#     model.train()
+#     model.likelihood.train()
     
-    avg_degree, max_degree, mean_degree = -1,-1,-1
+#     avg_degree, max_degree, mean_degree = -1,-1,-1
     
-    # mean_degree = degree of mean regression line (mean of all curves across all tasks)
-    x = to_numpy(X_inputs[X_inputs[:,1]==0][:,0])
-    mean_degree = count_line_curve_intersections_vectorized(x, mean.mean(axis=1), num_trials=num_trials)
-    if mean_max is not None:
-        if mean_degree > mean_max:
-            # mean_degree exceeds mean_max, so stop
-            stats = adict({'avg': avg_degree, 'max': max_degree, 'mean': mean_degree})
-            if ret is None: 
-                return stats
-            else:
-                stats.copy_to(ret)
-                return ret
+#     # mean_degree = degree of mean regression line (mean of all curves across all tasks)
+#     x = to_numpy(X_inputs[X_inputs[:,1]==0][:,0])
+#     mean_degree = count_line_curve_intersections_vectorized(x, mean.mean(axis=1), num_trials=num_trials)
+#     if mean_max is not None:
+#         if mean_degree > mean_max:
+#             # mean_degree exceeds mean_max, so stop
+#             stats = adict({'avg': avg_degree, 'max': max_degree, 'mean': mean_degree})
+#             if ret is None: 
+#                 return stats
+#             else:
+#                 stats.copy_to(ret)
+#                 return ret
     
-    degrees = []
-    for i in range(m):
-        y = to_numpy(mean[:, i])
-        d = count_line_curve_intersections_vectorized(x, y, num_trials=num_trials)
-        # plt.plot(x, y)
-        # plt.show()
-        degrees.append(d)
-        max_degree = np.max(degrees)
-        if max_max is not None:
-            if max_degree > max_max:
-                # max_degree exceeds max_max, so stop
-                stats = adict({'avg': avg_degree, 'max': max_degree, 'mean': mean_degree})
-                if ret is None: 
-                    return stats
-                else:
-                    stats.copy_to(ret)
-                    return ret
+#     degrees = []
+#     for i in range(m):
+#         y = to_numpy(mean[:, i])
+#         d = count_line_curve_intersections_vectorized(x, y, num_trials=num_trials)
+#         # plt.plot(x, y)
+#         # plt.show()
+#         degrees.append(d)
+#         max_degree = np.max(degrees)
+#         if max_max is not None:
+#             if max_degree > max_max:
+#                 # max_degree exceeds max_max, so stop
+#                 stats = adict({'avg': avg_degree, 'max': max_degree, 'mean': mean_degree})
+#                 if ret is None: 
+#                     return stats
+#                 else:
+#                     stats.copy_to(ret)
+#                     return ret
             
-    avg_degree = np.mean(degrees)
-    # show histogram
-    if verbose:
-        print(f'Average degree: {avg_degree}')
-        plt.hist(degrees, bins=np.ptp(degrees)+1)
-        plt.show()
-    stats = adict({'avg': avg_degree, 'max': max_degree, 'mean': mean_degree})
-    if ret is None: 
-        return stats
-    else:
-        stats.copy_to(ret)
-        return ret
+#     avg_degree = np.mean(degrees)
+#     # show histogram
+#     if verbose:
+#         print(f'Average degree: {avg_degree}')
+#         plt.hist(degrees, bins=np.ptp(degrees)+1)
+#         plt.show()
+#     stats = adict({'avg': avg_degree, 'max': max_degree, 'mean': mean_degree})
+#     if ret is None: 
+#         return stats
+#     else:
+#         stats.copy_to(ret)
+#         return ret
 
 # curvature metric
 def curvature_metric(model, X_inputs, m=None, verbose=False):

@@ -349,7 +349,7 @@ def to_numpy(x):
     x = x.cpu() if x.is_cuda else x
     return x.numpy() 
 
-from crossing import count_line_curve_intersections
+from multitask.degree import count_line_curve_intersections
 
 # degree metric
 def degree_metric(model, X, verbose=False):

@@ -3,6 +3,8 @@ import matplotlib.pyplot as plt
 from sklearn.linear_model import LinearRegression
 import random
 import time
+import gpytorch
+from utils import adict, to_numpy
 
 def count_line_curve_intersections(x_values, y_values, num_trials=100):
     """
@@ -156,11 +158,6 @@ def count_line_curve_intersections_vectorized(x_values, y_values, num_trials=500
         # If it's a vertical line (or we assigned slope=nan), skip
         if vertical_mask[i]:
             continue
-        
-        # d = diff[i]
-        # dz = np.mean(d==0)
-        # print(dz)
-        # non_zero_diff = diff[i]
         
         # Filter out zeros:
         non_zero_diff = diff[i][diff[i] != 0]
@@ -369,6 +366,74 @@ def count_line_curve_intersections_vec(x_values, y_values, num_trials=100):
     max_intersections = np.max(intersections)
     return max_intersections
 
+# degree metric
+def degree_metric(model, X_inputs, 
+                  m=None, 
+                  num_trials=500,
+                  mean_max=None,
+                  max_max=None,
+                  ret=None,
+                  verbose=False):
+    if m is None:
+        m = int(X_inputs[:,1].max().item() + 1)
+    model.eval()
+    model.likelihood.eval()
+    with torch.no_grad(), gpytorch.settings.fast_pred_var():
+        pred = model.likelihood(model(X_inputs))
+    mean = pred.mean.reshape(-1, m)
+    model.train()
+    model.likelihood.train()
+    
+    avg_degree, max_degree, mean_degree = -1,-1,-1
+    
+    # mean_degree = degree of mean regression line (mean of all curves across all tasks)
+    x = to_numpy(X_inputs[X_inputs[:,1]==0][:,0])
+    mean_degree = count_line_curve_intersections_vectorized(x, mean.mean(axis=1), num_trials=num_trials)
+    
+    # if mean_max is not None:
+    #     if mean_degree > mean_max:
+    #         # mean_degree exceeds mean_max, so stop
+    #         stats = adict({'avg': avg_degree, 'max': max_degree, 'mean': mean_degree})
+    #         if ret is None: 
+    #             return stats
+    #         else:
+    #             stats.copy_to(ret)
+    #             return ret
+    
+    degrees = []
+    for i in range(m):
+        y = to_numpy(mean[:, i])
+        d = count_line_curve_intersections_vectorized(x, y, num_trials=num_trials)
+        degrees.append(d)
+        max_degree = np.max(degrees)
+        
+        # # if max_max was provided, check if max_degree exceeds it
+        # if max_max is not None:
+        #     if max_degree > max_max:
+        #         # max_degree exceeds max_max, so stop
+        #         stats = adict({'avg': avg_degree, 'max': max_degree, 'mean': mean_degree})
+        #         if ret is None: 
+        #             return stats
+        #         else:
+        #             stats.copy_to(ret)
+        #             return ret
+            
+    avg_degree = np.mean(degrees)
+    
+    # show histogram
+    if verbose:
+        print(f'Average degree: {avg_degree}')
+        plt.hist(degrees, bins=np.ptp(degrees)+1)
+        plt.show()
+        
+    stats = adict({'avg': avg_degree, 'max': max_degree, 'mean': mean_degree})
+    if ret is None: 
+        return stats
+    else:
+        stats.copy_to(ret)
+        return ret
+
+     
 # Example usage:
 def demonstrate_with_example():
     # Generate example data with increasing wiggliness
