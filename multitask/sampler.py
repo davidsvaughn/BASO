@@ -526,25 +526,15 @@ class MultiTaskSampler:
         legend.append('Confidence')
         
         # compare to reference
-        # if self.Y_test is not None:
         if y_ref is not None:
             i = np.argmax(y_ref)
             ref_best_input = self.X_feats[i]
-            # y_ref_max = y_ref[i]
-            # Y_test_mean = self.Y_test.mean(axis=1)
             plt.plot(self.X_feats, y_ref, 'g')
-            # plt.legend(['Posterior Mean', 'Confidence', 'Target Mean'])
             legend.append('Target Mean')
             
             # draw vertical dotted line at best input
             plt.axvline(ref_best_input, color='g', linestyle='--')
             legend.append('Target Optimum')
-            
-            # get current y limits all the way to border of plot
-            # y_min, y_max = plt.ylim()
-            
-            # # shade region between 2 vertical lines
-            # plt.fill_betweenx([y_min, y_max], self.current_best_checkpoint, ref_best_input, color='gray', alpha=0.2)
             
         plt.axvline(self.current_best_checkpoint, color='b', linestyle='--')
         legend.append('Current Optimum')
@@ -557,12 +547,7 @@ class MultiTaskSampler:
             y_min -= padding
             y_max += padding
             plt.ylim(y_min, y_max)
-            
-            # plt.fill_betweenx([y_min, y_max], self.current_best_checkpoint, ref_best_input, color='gray', alpha=0.2)
-            # make shading light red
             plt.fill_betweenx([y_min, y_max], self.current_best_checkpoint, ref_best_input, color='red', alpha=0.1)
-            
-        # plt.legend(legend, loc='best')
         
         plt.title(f'Round: {self.round-1} - Estimated Max: {self.current_best_checkpoint}')
         self.display(prefix=prefix)
