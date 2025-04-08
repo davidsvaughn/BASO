@@ -558,7 +558,9 @@ class MultiTaskSampler:
             y_max += padding
             plt.ylim(y_min, y_max)
             
-            plt.fill_betweenx([y_min, y_max], self.current_best_checkpoint, ref_best_input, color='gray', alpha=0.2)
+            # plt.fill_betweenx([y_min, y_max], self.current_best_checkpoint, ref_best_input, color='gray', alpha=0.2)
+            # make shading light red
+            plt.fill_betweenx([y_min, y_max], self.current_best_checkpoint, ref_best_input, color='red', alpha=0.1)
             
         # plt.legend(legend, loc='best')
         

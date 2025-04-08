@@ -20,7 +20,7 @@ rank_fraction = -1
 # SET PARAMETERS
 
 fn = 'phi4-math-4claude.txt'
-# fn = 'phi4-bw-4claude.txt'
+fn = 'phi4-bw-4claude.txt'
 
 # rand_seed = 2951
 
