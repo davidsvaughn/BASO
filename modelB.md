@@ -1,10 +1,8 @@
-## KaTeX
+## Model
 
-You can render LaTeX mathematical expressions using [KaTeX](https://khan.github.io/KaTeX/):
-
-The *Gamma function* satisfying $\Gamma(n) = (n-1)!\quad\forall n\in\mathbb N$ is via the Euler integral
+Bayesian Optimization using a Multi-task Gaussian Process model. This formulation uses an ICM (intrinsic co-regionalization model) kernel, which is a way to induce/learn inter-task correlations. The multi-task ICM kernel is represented as:
 
 $$
-\Gamma(z) = \int_0^\infty t^{z-1}e^{-t}dt\,.
+K_icm ((x,t),(x',t')) = K_x(x,x') \otimes K_t(t,t')
 $$
 
