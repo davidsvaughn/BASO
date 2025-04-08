@@ -62,7 +62,8 @@ class StoppingCondition:
     
     @property
     def name(self):
-        return self.value if isinstance(self.value, str) else self.value.__name__
+        s = self.value if isinstance(self.value, str) else self.value.__name__
+        return s.capitalize()
     
     def log(self, msg, verbosity_level=1):
         self.message_log.append(msg)
@@ -107,7 +108,7 @@ class StoppingCondition:
         
         return False
     
-    def _eval(self, **kwargs):
+    def _eval(self, report=None, **kwargs):
         """ Add a new value to the history.
             Evaluate if condition is met.
         """
@@ -131,6 +132,9 @@ class StoppingCondition:
             
         # store and update the moving average
         self._update(value)
+        
+        if report is not None:
+            report[self.name] = value
         
         # check if stop condition is met
         if self.iteration>self.min_iterations and self.iteration%self.interval==0:

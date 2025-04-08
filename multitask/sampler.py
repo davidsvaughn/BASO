@@ -6,9 +6,6 @@ warnings.filterwarnings("ignore", category=UserWarning, message=".*torch.cuda.*D
 warnings.filterwarnings("ignore", category=UserWarning, message=".*torch.sparse.SparseTensor.*")
 
 import numpy as np
-# import os
-# from datetime import datetime
-# from scipy.stats import norm
 from matplotlib import pyplot as plt
 import torch
 import gpytorch
@@ -16,8 +13,6 @@ import logging
 import math
 import time
 from scipy.stats import gaussian_kde
-# from math import ceil
-# from glob import glob
 from functools import partial
 
 from botorch.models import MultiTaskGP
@@ -28,7 +23,6 @@ from stopping import StoppingCondition, StoppingConditions
 from normalize import Transform
 from degree import degree_metric
 
-# device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 torch.set_default_dtype(torch.float64)
 
 #----------------------------------------------------------------------
@@ -72,11 +66,11 @@ class MultiTaskSampler:
         # normalize X_feats to unit interval [0..1]
         self.X_test, self.X_norm = Transform.normalize(X_feats)
         
-        # create X_inputs (dx2) that includes task indices
+        # create X_inputs (d x 2) that includes task indices
         all_idx = np.where(np.ones_like(Y_obs))
         self.X_inputs = torch.tensor([ [self.X_test[i], j] for i, j in  zip(*all_idx) ], dtype=torch.float64)
         
-        # create X_train (dx2) and Y_train (dx1) from observed data
+        # create X_train (d x 2) and Y_train (d x 1) from observed data
         sample_idx = np.where(self.S)
         self.X_train = torch.tensor([ [self.X_test[i], j] for i, j in  zip(*sample_idx) ], dtype=torch.float64)
         self.Y_train = torch.tensor( Y_obs[sample_idx], dtype=torch.float64 ).unsqueeze(-1)
@@ -136,7 +130,7 @@ class MultiTaskSampler:
         """
         return np.mean(self.S)
     
-    # fit model and update posterior predictions
+    # fit model and recompute posterior predictions
     def update(self):
         self.fit()
         return self.predict()
@@ -199,7 +193,7 @@ class MultiTaskSampler:
             min_iterations = max(50, min_iterations - 10*self.num_retries//2)
                 
         #---------------------------------------------------------------------
-        # define task_covar_prior (IMPORTANT!!! nothing works without this...)
+        # define task_covar_prior (IMPORTANT!!! with sparse data, nothing works without this!)
         # see: https://archive.botorch.org/v/0.9.2/api/_modules/botorch/models/multitask.html
         if eta is None:
             task_covar_prior = None
@@ -221,7 +215,6 @@ class MultiTaskSampler:
         
         # Set the model and likelihood to training mode
         self.model.train()
-        self.model.likelihood.train() # need this ???
         
         # "Loss" for GPs - the marginal log likelihood
         mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood=self.model.likelihood, model=self.model)
@@ -230,7 +223,7 @@ class MultiTaskSampler:
         optimizer = torch.optim.Adam(self.model.parameters(), lr=self.lr)
         
         #---------------------------------------------------------
-        # stopping criteria
+        # Stopping Criteria...
         
         #-----------------------------------
         # relative change stopping criterion
@@ -241,7 +234,7 @@ class MultiTaskSampler:
             alpha=5,
             min_iterations=min_iterations,
             patience=patience,
-            lr_steps=5,
+            lr_steps=5, # learning rate lowered 5 times before termination
             lr_gamma=0.8,
             optimizer=optimizer,
             verbosity=self.verbosity,
@@ -250,18 +243,15 @@ class MultiTaskSampler:
         #-----------------------------------
         # max-degree stopping criterion
         
-        # function closure for degree metric
-        deg_stats = adict()
+        # function closure for max_degree metric
         def max_degree(**kwargs):
-            nonlocal deg_stats
-            degree_metric(model=self.model, X_inputs=self.X_inputs, m=self.m, ret=deg_stats, num_trials=200)
-            return deg_stats.max
+            return degree_metric(model=self.model, X_inputs=self.X_inputs, m=self.m, num_trials=100)['max']
         
         degree_condition = StoppingCondition(
             value=max_degree,
             condition="x[-1] > t",
             t=3,
-            interval=5,
+            interval=5, # check every 5 iterations
             min_iterations=min_iterations,
             verbosity=self.verbosity,
         )
@@ -272,6 +262,7 @@ class MultiTaskSampler:
         
         #---------------------------------------------------------
         
+        report = {}
         start_time = time.time()
         
         # train loop
@@ -289,8 +280,9 @@ class MultiTaskSampler:
                 return False
             
             loss.backward()
-        
-            if stop_conditions.check(loss=loss.item()):
+            
+            
+            if stop_conditions.check(loss=loss.item(), report=report):
                 break
             
             optimizer.step()
@@ -298,9 +290,7 @@ class MultiTaskSampler:
             if i % self.log_interval == 0:
                 iter_per_sec = self.log_interval/(time.time() - start_time)
                 start_time = time.time()
-                
-                try: self.log(f'[ROUND-{self.round}]\tITER-{i}/{self.max_iterations}\tLoss: {loss.item():.4g}\tMaxDeg: {deg_stats.max}\tAvgDeg: {deg_stats.avg:.4g}\tit/s: {iter_per_sec:.2g}')
-                except: self.log(f'[ROUND-{self.round}]\tITER-{i}/{self.max_iterations}\tLoss: {loss.item():.4g}\tit/s: {iter_per_sec:.2g}')   
+                self.log(f'[ROUND-{self.round}]\tITER-{i}/{self.max_iterations}\t{iter_per_sec:.2g} it/s\t' + '\t'.join([f'{k}: {v:.4g}' for k,v in report.items()]))  
                      
         #---- end train loop --------------------------------------------------
         
@@ -313,27 +303,26 @@ class MultiTaskSampler:
         if x is None:
             x = self.X_inputs
         self.model.eval()
-        self.model.likelihood.eval()
         
         with torch.no_grad(), gpytorch.settings.fast_pred_var():
             predictions = self.model.likelihood(self.model(x))
         
         # retrieve
-        y_mean = predictions.mean
-        y_var = predictions.variance
+        y_means = predictions.mean
+        y_vars = predictions.variance
         y_covar = predictions.covariance_matrix
         
         # reshape
-        y_pred = to_numpy(y_mean.reshape(n, m))
-        y_var = to_numpy(y_var.reshape(n, m))
+        y_means = to_numpy(y_means.reshape(n, m))
+        y_vars = to_numpy(y_vars.reshape(n, m))
         y_covar = to_numpy(y_covar.reshape((n, m, n, m)))
         
         # inverse standardize...
-        y_pred = self.Y_stand.inv(y_pred)
+        y_means = self.Y_stand.inv(y_means)
         sigma = self.Y_stand.params['sigma']
-        y_var = y_var * sigma**2
-        y_sig = np.sqrt(y_var)
-        y_mean = y_pred.mean(axis=1)
+        y_vars = y_vars * sigma**2
+        y_sig = np.sqrt(y_vars)
+        y_mean = y_means.mean(axis=1)
         y_covar = y_covar * sigma**2
         y_sigma = np.array([np.sqrt(y_covar[i,:,i].sum()) for i in range(n)]) / m
         
@@ -344,11 +333,11 @@ class MultiTaskSampler:
         
         #-------------------------------------------------
         
-        self.y_pred = y_pred
+        self.y_means = y_means
         self.y_mean = y_mean
         self.y_sig = y_sig
         self.y_sigma = y_sigma
-        return y_mean, y_sigma, y_pred, y_sig
+        return y_mean, y_sigma, y_means, y_sig
     
     def compare(self, y_ref):
         i = np.argmax(y_ref)
@@ -360,6 +349,168 @@ class MultiTaskSampler:
         self.log(f'[ROUND-{self.round}]\tSTATS\t{self.current_best_checkpoint}\t{current_y_val:.4f}\t{err:.4g}\t{self.sample_fraction:.4f}')
         self.log(f'[ROUND-{self.round}]\tCURRENT BEST:\tCHECKPOINT-{self.current_best_checkpoint}\tY_PRED={current_y_val:.4f}\tY_ERR={100*err:.4g}%\t({100*self.sample_fraction:.2f}% sampled)')
         
+    #-------------------------------------------------------------------------
+    
+    # dampen the acquisition function in highly sampled regions
+    def sample_damper(self, decay=1.0, bw_mult=25.0):
+        # bandwidth for kde smoother
+        bw = bw_mult * decay / self.n
+        # x-axis possible sample locations
+        X = self.X_test
+        # matrix to hold kde estimates
+        K = np.ones_like(self.S, dtype=np.float64) * np.nan
+        
+        # for each task compute kde
+        for j in range(K.shape[1]):
+            y = self.S[:, j]
+            # extract sampled and unsampled points
+            x, o = X[y], X[~y]
+            # compute kde from sampled points
+            kde = gaussian_kde(x, bw_method=bw)
+            # evaluate kde at unsampled points
+            v = kde(o)
+            # normalize kde...
+            v = v/np.sum(v)
+            # and scale each task by number of sampled points in that task
+            v *= len(x)/K.shape[0]
+            # assign back to K
+            K[~y, j] = v
+        return K
+    
+    # compute expected improvement
+    def max_expected_improvement(self, beta=0.5, decay=1.0, debug=True):
+        S_mu = self.y_means.sum(axis=-1)
+        S_max_idx = np.argmax(S_mu)
+        S_max = S_mu[S_max_idx]
+        
+        # get unsampled indices
+        i_indices, j_indices = np.where(np.ones_like(self.S))
+        mask = (~self.S).reshape(-1)
+        
+        # Vectorized computation of all EI components
+        valid_i, valid_j = i_indices[mask], j_indices[mask]
+            
+        # Initialize EI matrix with -inf for invalid entries
+        EI = np.full(len(mask), -math.inf)
+
+        # Vectorized computation of all EI components
+        mu = self.y_means[valid_i, valid_j]
+        sig = self.y_sig[valid_i, valid_j]
+
+        # Get row sums for each valid i
+        row_sums = np.sum(self.y_means[valid_i, :], axis=1)
+        sx = row_sums - mu
+
+        # improvement vector, z-scores
+        s_max = S_max - sx
+        imp = mu - s_max - beta
+        z = imp/sig
+
+        # if use_logei: # logEI computation (for stability)
+        logh = log_h(torch.tensor(z, dtype=torch.float64)).numpy()
+        ei_values = np.log(sig) + logh
+        # else: # standard EI
+        #     ei_values = imp * norm.cdf(z) + sig * norm.pdf(z)
+        #     ei_values = np.log(ei_values)
+        
+        if debug:
+            # retain original EI matrix for
+            # comparison to dampened EI matrix
+            EI0 = EI.copy()
+            EI0[mask] = ei_values
+            
+        # dampen highly sampled regions
+        D = self.sample_damper(decay=decay)
+        d = D[valid_i, valid_j]
+        ei_min = ei_values.min()
+        # shift (so non-negative) -> apply dampening -> unshift
+        ei_values = (ei_values-ei_min) * (1 - decay * d**0.5) + ei_min
+
+        # Assign computed values to valid sampling positions and return optimum
+        EI[mask] = ei_values
+        k = np.argmax(EI)
+        next_i, next_j = i_indices[k], j_indices[k]
+        
+        #-----------------------------------------------------------
+        # debug
+        if debug:
+            self.plot_task(next_j, 'NO DAMPER', EI0.reshape(self.n, self.m)[:, next_j])
+            self.plot_task(next_j, 'before', EI.reshape(self.n, self.m)[:, next_j])
+        #------------------------------------------------------------
+        
+        # decay EI parameters
+        self.ei_decay = self.ei_decay * self.ei_gamma
+        self.ei_beta = self.ei_beta * self.ei_gamma
+        self.log(f'[ROUND-{self.round}]\tFYI: EI beta: {self.ei_beta:.4g}', 2)
+        
+        return next_i, next_j
+    
+    #----------------------------------------------------------------------
+    
+    # report task with most samples
+    def report_most_sampled_task(self):
+        task_counts = np.sum(self.S, axis=0)
+        max_task = np.argmax(task_counts)
+        max_count = task_counts[max_task]
+        self.log(f'[ROUND-{self.round}]\tFYI: TASK-{max_task} has most samples: {max_count}', 1)
+    
+    # choose next sample
+    def get_next_sample_point(self):
+        
+        # Maximize Expected Improvement acquisition function
+        next_i, next_j = self.max_expected_improvement(beta=self.ei_beta, decay=self.ei_decay)
+        self.next_i, self.next_j = next_i, next_j
+        
+        # convert to original X feature space
+        next_checkpoint = self.X_feats[next_i]
+        self.log(f'[ROUND-{self.round}]\tNEXT SAMPLE:\tCHECKPOINT-{next_checkpoint}\tTASK-{next_j}')
+        
+        # report task with most samples
+        self.report_most_sampled_task()
+        self.log('='*100)
+        
+        # return next sample point
+        return next_i, next_j
+    
+    # add next sample to training set
+    def add_next_sample(self, Y=None):
+        
+        # check if Y is provided
+        if Y is None:
+            Y = self.Y_test
+        if Y is None:
+            raise ValueError('Y is None, no data source for next sample')
+        
+        if self.next_i is None or self.next_j is None:
+            # check if Y is scalar value
+            if np.isscalar(Y):
+                raise ValueError('Y is a scalar value, but next sample point is not chosen yet')
+            self.get_next_sample_point()
+            
+        # get next sample indices
+        next_i, next_j = self.next_i, self.next_j
+        
+        # acquire next observation
+        if np.isscalar(Y):
+            y = Y
+        elif callable(Y):
+            # if y is callable function, then call it with next_i, next_j
+            y = Y(next_i, next_j)
+        else:
+            # else, access Y directly with next_i, next_j
+            try:
+                y = Y[next_i][next_j]
+            except Exception as e:
+                raise ValueError(f'Error accessing Y with next_i, next_j: {e}')
+            
+        # add new sample to training set (observe) and update mask
+        self.X_train = torch.cat([self.X_train, torch.tensor([ [self.X_test[next_i], next_j] ], dtype=torch.float64)])
+        self.Y_train = torch.cat([self.Y_train, torch.tensor([y], dtype=torch.float64).unsqueeze(-1)])
+        self.Y_obs[next_i, next_j] = y
+        
+        # return next sample point
+        return next_i, next_j
+    
     #-------------------------------------------------------------------------
     # Plotting functions
     
@@ -402,12 +553,12 @@ class MultiTaskSampler:
         legend.append('Observed')
         
         # Plot predictive means as blue line
-        ax1.plot(x, self.y_pred[:, j], 'b')
+        ax1.plot(x, self.y_means[:, j], 'b')
         legend.append('Posterior Mean')
         
         # confidences
         win = 2 * self.y_sig[:, j]
-        ax1.fill_between(x, self.y_pred[:, j] - win, self.y_pred[:, j] + win, alpha=0.5)
+        ax1.fill_between(x, self.y_means[:, j] - win, self.y_means[:, j] + win, alpha=0.5)
         legend.append('Confidence')
         
         # Set up primary y-axis labels
@@ -423,11 +574,7 @@ class MultiTaskSampler:
             ax2.set_ylabel('Acquisition Function Value', color='g')
             ax2.tick_params(axis='y', labelcolor='g')
             legend.append('EI')
-            
-            # Create custom legend with all elements
-            # ax1.legend(legend, loc='best')
-        # else:
-            # ax1.legend(['Unobserved', 'Observed', 'Posterior Mean', 'Confidence'])
+        
         ax1.legend(legend, loc='best')
         
         plt.title(f'Round: {self.round} - Task: {j} {msg}')
@@ -440,156 +587,3 @@ class MultiTaskSampler:
             if max_fig is not None and j > max_fig:
                 break
             self.plot_task(j)
-            
-    #-------------------------------------------------------------------------
-    
-    # dampen the acquisition function in highly sampled regions
-    def sample_damper(self, decay=1.0, bw_mult=25.0):
-        # bandwidth for kde smoother
-        bw = bw_mult * decay / self.n
-        # x-axis possible sample locations
-        X = self.X_test
-        # matrix to hold kde estimates
-        K = np.ones_like(self.S, dtype=np.float64) * np.nan
-        
-        # for each task compute kde
-        for j in range(K.shape[1]):
-            y = self.S[:, j]
-            # extract sampled and unsampled points
-            x, o = X[y], X[~y]
-            # compute kde from sampled points
-            kde = gaussian_kde(x, bw_method=bw)
-            # evaluate kde at unsampled points
-            v = kde(o)
-            # normalize kde...
-            v = v/np.sum(v)
-            # and scale each task by number of sampled points in that task
-            v *= len(x)/K.shape[0]
-            # assign back to K
-            K[~y, j] = v
-        return K
-    
-    # compute expected improvement
-    def max_expected_improvement(self, beta=0.5, decay=1.0, debug=True):
-        S_mu = self.y_pred.sum(axis=-1)
-        S_max_idx = np.argmax(S_mu)
-        S_max = S_mu[S_max_idx]
-        
-        # get unsampled indices
-        i_indices, j_indices = np.where(np.ones_like(self.S))
-        mask = (~self.S).reshape(-1)
-        
-        # Vectorized computation of all EI components
-        valid_i, valid_j = i_indices[mask], j_indices[mask]
-            
-        # Initialize EI array with -inf for invalid entries
-        EI = np.full(len(mask), -math.inf)
-
-        # Vectorized computation of all EI components
-        mu = self.y_pred[valid_i, valid_j]
-        sig = self.y_sig[valid_i, valid_j]
-
-        # Get row sums for each valid i
-        row_sums = np.sum(self.y_pred[valid_i, :], axis=1)
-        sx = row_sums - mu
-
-        # improvement vector, z-scores
-        s_max = S_max - sx
-        imp = mu - s_max - beta
-        z = imp/sig
-
-        # if use_logei: # logEI computation (for stability)
-        logh = log_h(torch.tensor(z, dtype=torch.float64)).numpy()
-        ei = np.log(sig) + logh
-        # else: # normal EI
-        #     ei = imp * norm.cdf(z) + sig * norm.pdf(z)
-        #     ei = np.log(ei)
-            
-        # # dampen highly sampled regions
-        D = self.sample_damper(decay=decay)
-        d = D[valid_i, valid_j]
-        
-        if debug:
-            EI0 = EI.copy()
-            EI0[mask] = ei
-            
-        # shift (so non-negative) -> apply dampening -> unshift
-        ei_min = ei.min()
-        ei = (ei-ei_min) * (1 - decay * d**0.5) + ei_min
-
-        # Assign computed values to valid positions and return
-        EI[mask] = ei
-        k = np.argmax(EI)
-        next_i, next_j = i_indices[k], j_indices[k]
-        
-        #-----------------------------------------------------------
-        # debug
-        if debug:
-            self.plot_task(next_j, 'ORIGINAL', EI0.reshape(self.n, self.m)[:, next_j])
-            self.plot_task(next_j, '(before)', EI.reshape(self.n, self.m)[:, next_j])
-        #------------------------------------------------------------
-        
-        # decay EI parameters
-        self.ei_decay = self.ei_decay * self.ei_gamma
-        self.ei_beta = self.ei_beta * self.ei_gamma
-        self.log(f'[ROUND-{self.round}]\tFYI: EI beta: {self.ei_beta:.4g}', 2)
-        
-        #------------------------------------------------------------
-        return next_i, next_j
-    
-    #----------------------------------------------------------------------
-    # choose next sample
-    
-    def get_next_sample_point(self):
-        
-        # Maximize Expected Improvement acquisition function
-        next_i, next_j = self.max_expected_improvement(beta=self.ei_beta, decay=self.ei_decay)
-        self.next_i, self.next_j = next_i, next_j
-        
-        # convert to original X feature space
-        next_checkpoint = self.X_feats[next_i]
-        self.log(f'[ROUND-{self.round}]\tNEXT SAMPLE:\tCHECKPOINT-{next_checkpoint}\tTASK-{next_j}')
-        
-        # report task with most samples
-        task_counts = np.sum(self.S, axis=0)
-        max_task = np.argmax(task_counts)
-        max_count = task_counts[max_task]
-        self.log(f'[ROUND-{self.round}]\tFYI: TASK-{max_task} has most samples: {max_count}', 1)
-        self.log('='*100)
-        
-        # return next sample point
-        return next_i, next_j
-    
-    
-    def add_next_sample(self, Y=None):
-        if Y is None:
-            Y = self.Y_test
-        if Y is None:
-            raise ValueError('Y is None, no data source for next sample')
-        
-        if self.next_i is None or self.next_j is None:
-            # check if Y is scalar value
-            if np.isscalar(Y):
-                raise ValueError('Y is a scalar value, but next sample point is not chosen yet')
-            self.get_next_sample_point()
-            
-        # get next sample indices
-        next_i, next_j = self.next_i, self.next_j
-        
-        # acquire next observation
-        if np.isscalar(Y):
-            y = Y
-        elif callable(Y):
-            # if y is callable function, then call it with next_i, next_j
-            y = Y(next_i, next_j)
-        else:
-            # else, access Y directly with next_i, next_j
-            y = Y[next_i][next_j]
-            
-        # add new sample to training set (observe) and update mask
-        self.X_train = torch.cat([self.X_train, torch.tensor([ [self.X_test[next_i], next_j] ], dtype=torch.float64)])
-        self.Y_train = torch.cat([self.Y_train, torch.tensor([y], dtype=torch.float64).unsqueeze(-1)])
-        self.Y_obs[next_i, next_j] = y
-        
-        # return next sample point
-        return next_i, next_j
