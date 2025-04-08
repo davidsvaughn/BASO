@@ -5,7 +5,7 @@ import torch
 import math
 from functools import partial
 import gpytorch
-# from degree import count_line_curve_intersections_vectorized
+from glob import glob
 import matplotlib.pyplot as plt
 
 torch.set_default_dtype(torch.float64)
@@ -52,11 +52,14 @@ def to_numpy(x):
         x = x.cpu()
     return x.numpy()
 
-def display_fig(run_dir, fig=None, fn=None):
+def display_fig(run_dir, fig=None, fn=None, prefix='fig'):
     if run_dir is not None:
-        j = len([f for f in os.listdir(run_dir) if f.endswith('.png')])
+        # j = len([f for f in os.listdir(run_dir) if f.endswith('.png')])
+        # count how many .png files start with prefix
+        j = len(glob(os.path.join(run_dir, f'{prefix}_*.png')))
+        
         if fn is None:
-            fn = os.path.join(run_dir, f'fig_{j+1}.png')
+            fn = os.path.join(run_dir, f'{prefix}_{j+1}.png')
         if fig is None:
             plt.savefig(fn)
             plt.close()

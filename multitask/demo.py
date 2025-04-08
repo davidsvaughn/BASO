@@ -45,7 +45,7 @@ ei_f, ei_t = 0.2, 0.05
 # ei_gamma = 0.9925
 
 # misc
-log_interval = 10
+log_interval = 25
 verbosity = 1
 use_cuda = True
 max_sample_fraction = 0.1 # stop BO after this fraction of all points are sampled
@@ -214,7 +214,7 @@ for _ in range(10):
             sampler.update()
             sampler.compare(Y_test_reg)
             sampler.plot_task(next_task, '- AFTER')
-            sampler.plot_posterior_mean()
+            sampler.plot_posterior_mean(Y_test_reg)
             
         break
         

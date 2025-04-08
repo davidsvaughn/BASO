@@ -342,11 +342,11 @@ class MultiTaskSampler:
         i = np.argmax(y_ref)
         y_ref_max = y_ref[i]
         # ref_best_checkpoint = self.X_feats[i]
+        
         current_y_val = y_ref[self.current_best_idx]
         self.current_err = err = abs(current_y_val - y_ref_max)/y_ref_max
         
         self.log('-'*100)
-        # self.log(f'[ROUND-{self.round}]\tSTATS\t{self.current_best_checkpoint}\t{current_y_val:.4f}\t{err:.4g}\t{self.sample_fraction:.4f}')
         self.log(f'[ROUND-{self.round}]\tCURRENT BEST:\tCHECKPOINT-{self.current_best_checkpoint}\tY_PRED={current_y_val:.4f}\tY_ERR={100*err:.4g}%\t({100*self.sample_fraction:.2f}% sampled)')
         
     #-------------------------------------------------------------------------
@@ -435,7 +435,7 @@ class MultiTaskSampler:
         # debug
         if debug:
             self.plot_task(next_j, '- NO DAMPER', EI0.reshape(self.n, self.m)[:, next_j])
-            self.plot_task(next_j, '- BEFORE', EI.reshape(self.n, self.m)[:, next_j])
+        self.plot_task(next_j, '- BEFORE', EI.reshape(self.n, self.m)[:, next_j])
         #------------------------------------------------------------
         
         # decay EI parameters
@@ -514,26 +514,58 @@ class MultiTaskSampler:
     #-------------------------------------------------------------------------
     # Plotting functions
     
-    def display(self, fig=None, fn=None):
-        display_fig(self.run_dir, fig=fig, fn=fn)
+    def display(self, fig=None, fn=None, prefix='fig'):
+        display_fig(self.run_dir, fig=fig, fn=fn, prefix=prefix)
     
-    def plot_posterior_mean(self):
+    def plot_posterior_mean(self, y_ref=None, prefix='posterior_mean'):
+        legend = []
         plt.figure(figsize=(15, 10))
         plt.plot(self.X_feats, self.y_mean, 'b')
+        legend.append('Posterior Mean')
         plt.fill_between(self.X_feats, self.y_mean - 2*self.y_sigma, self.y_mean + 2*self.y_sigma, alpha=0.5)
+        legend.append('Confidence')
         
-        # true mean of all data (optional?)
-        if self.Y_test is not None:
-            Y_test_mean = self.Y_test.mean(axis=1)
-            plt.plot(self.X_feats, Y_test_mean, 'r')
-            plt.legend(['Posterior Mean', 'Confidence', 'True Mean'])
-        else:
-            plt.legend(['Posterior Mean', 'Confidence'])
+        # compare to reference
+        # if self.Y_test is not None:
+        if y_ref is not None:
+            i = np.argmax(y_ref)
+            ref_best_input = self.X_feats[i]
+            # y_ref_max = y_ref[i]
+            # Y_test_mean = self.Y_test.mean(axis=1)
+            plt.plot(self.X_feats, y_ref, 'g')
+            # plt.legend(['Posterior Mean', 'Confidence', 'Target Mean'])
+            legend.append('Target Mean')
             
-        plt.title(f'Round: {self.round} - Current Best Checkpoint: {self.current_best_checkpoint}')
-        self.display()
+            # draw vertical dotted line at best input
+            plt.axvline(ref_best_input, color='g', linestyle='--')
+            legend.append('Target Optimum')
+            
+            # get current y limits all the way to border of plot
+            # y_min, y_max = plt.ylim()
+            
+            # # shade region between 2 vertical lines
+            # plt.fill_betweenx([y_min, y_max], self.current_best_checkpoint, ref_best_input, color='gray', alpha=0.2)
+            
+        plt.axvline(self.current_best_checkpoint, color='b', linestyle='--')
+        legend.append('Current Optimum')
         
-    def plot_task(self, j, msg='', fvals=None):
+        plt.legend(legend, loc='best')
+        
+        if y_ref is not None:
+            y_min, y_max = plt.ylim()
+            padding = (y_max - y_min) * 0.05
+            y_min -= padding
+            y_max += padding
+            plt.ylim(y_min, y_max)
+            
+            plt.fill_betweenx([y_min, y_max], self.current_best_checkpoint, ref_best_input, color='gray', alpha=0.2)
+            
+        # plt.legend(legend, loc='best')
+        
+        plt.title(f'Round: {self.round-1} - Estimated Max: {self.current_best_checkpoint}')
+        self.display(prefix=prefix)
+        
+    def plot_task(self, j, msg='', fvals=None, prefix='task'):
         fig, ax1 = plt.subplots(figsize=(15, 10))
         x = self.X_feats
         legend = []
@@ -571,15 +603,16 @@ class MultiTaskSampler:
             
             # Plot fvals as green dashed line on secondary axis
             ax2.plot(x, fvals, 'g--')
-            ax2.set_ylabel('Expected Improvement', color='g')
+            ax2.set_ylabel('log(EI)', color='g')
             ax2.tick_params(axis='y', labelcolor='g')
-            legend.append('EI')
-        
-        ax1.legend(legend, loc='best')
+            legend.append('Expected Improvement')
+            fig.legend(legend, loc='upper left')
+        else:
+            ax1.legend(legend, loc='best')
         
         plt.title(f'Round: {self.round} - Task: {j} {msg}')
         plt.tight_layout()  # Adjust layout to make room for the second y-axis label
-        self.display()
+        self.display(prefix=prefix)
     
     def plot_all(self, max_fig=None):
         self.plot_posterior_mean()
