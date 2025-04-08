@@ -22,10 +22,6 @@ rank_fraction = -1
 fn = 'phi4-math-4claude.txt'
 # fn = 'phi4-bw-4claude.txt'
 
-# select random subset of tasks
-task_sample = 1.0
-# task_sample = 0.5
-
 # rand_seed = 2951
 
 # number of random obs-per-task (opt) to initially sample
@@ -33,34 +29,28 @@ task_sample = 1.0
 n_obs    = 2
 # n_obs    = 0.04
 
-# stop BO sampling after this fraction of points are sampled
-max_sample_fraction = 0.1
+# select random subset of tasks
+task_sample = 1.0
+# task_sample = 0.5
 
-# MLE estimation
-learning_rate = 0.1
-min_iterations = 100
-max_iterations = 1000
-max_retries = 20
-use_cuda = True
-
-# lkj prior
+# multi-task lkj prior
 eta = 0.25
 eta_gamma = 0.9
 rank_fraction = 0.25
 
-# Expected Improvement parameters
-use_ei = True
-use_logei = True
+# Expected Improvement parameters...
 ei_beta = 0.5
-# ei_beta will be ei_f of its start value when ei_t of all points have been sampled
+# deta decay: ei_beta will be ei_f of its start value when ei_t of all points have been sampled
 ei_f, ei_t = 0.2, 0.05
 # ei_gamma = 0.9925
 
-# logging intervals
+# misc
 log_interval = 10
 verbosity = 1
+use_cuda = True
+max_sample_fraction = 0.1 # stop BO after this fraction of all points are sampled
 
-# compare_random = False
+# synthetic data...
 # synthetic = False
 # n_rows, n_cols = 100, 100
 
@@ -135,18 +125,18 @@ X_feats = df['CHECKPOINT'].apply(lambda x: int(x.split('-')[1])).values
 test_cols = [col for col in df.columns if col.startswith('TEST_') and col != 'TEST_AVERAGE']
 Y_test = df[test_cols].values
 del test_cols
-N,M = Y_test.shape
+n,m = Y_test.shape
 
 # sample subset of tasks (possibly)
 if task_sample>0 and task_sample!=1:
     if task_sample < 1:
-        task_sample = int(task_sample * M)
-    idx = np.random.choice(range(M), task_sample, replace=False)
+        task_sample = int(task_sample * m)
+    idx = np.random.choice(range(m), task_sample, replace=False)
     Y_test = Y_test[:, idx]
-    N,M = Y_test.shape
+    n,m = Y_test.shape
     
 # compute ei_gamma
-ei_gamma = np.exp(np.log(ei_f) / (ei_t*N*M - 2*M))
+ei_gamma = np.exp(np.log(ei_f) / (ei_t*n*m - 2*m))
 log(f'FYI: ei_gamma: {ei_gamma:.4g}')
 
 #--------------------------------------------------------------------------
@@ -158,10 +148,9 @@ Y_test_reg = Y_test.mean(axis=1) # shortcut (just take the mean across tasks)
 if Y_test_reg is None:
     sampler = MultiTaskSampler(X_feats, Y_test, 
                                Y_test=Y_test,
-                               lr=learning_rate,
                                eta=None,
-                               max_iterations=1000,
                                min_iterations=100,
+                               max_iterations=1000,
                                patience=10,
                                rank_fraction=0.5,
                                log_interval=10,
@@ -192,20 +181,20 @@ for _ in range(10):
     
     try:
         # Subsample data
-        S = init_samples(N, M, n_obs, log=log)
+        S = init_samples(n, m, n_obs, log=log)
         Y_obs = np.full(S.shape, np.nan)
         Y_obs[S] = Y_test[S]
             
         # Initialize the sampler
         sampler = MultiTaskSampler(X_feats, Y_obs,
                                    Y_test=Y_test,
-                                   lr=learning_rate,
                                    eta=eta,
                                    eta_gamma=eta_gamma,
                                    ei_beta=ei_beta,
                                    ei_gamma=ei_gamma,
-                                   max_iterations=max_iterations,
-                                   max_retries=max_retries,
+                                   min_iterations=50,
+                                   max_iterations=1000,
+                                   max_retries=20,
                                    verbosity=1,
                                    max_sample_fraction=max_sample_fraction, 
                                    rank_fraction=rank_fraction,
@@ -224,7 +213,7 @@ for _ in range(10):
             _, next_task = sampler.add_next_sample()
             sampler.update()
             sampler.compare(Y_test_reg)
-            sampler.plot_task(next_task, '(after)')
+            sampler.plot_task(next_task, '- AFTER')
             sampler.plot_posterior_mean()
             
         break

@@ -30,7 +30,6 @@ torch.set_default_dtype(torch.float64)
 """
 Bayesian Optimization with Multi-Task Gaussian Processes
 
-
 see: https://botorch.readthedocs.io/en/latest/models.html#botorch.models.multitask.MultiTaskGP
 
 """
@@ -276,11 +275,10 @@ class MultiTaskSampler:
                 if self.num_retries+1 == self.max_retries:
                     self.logger.exception("An exception occurred")
                 else:
-                    self.logger.error(f'error in loss calculation at iteration {i}:\n{e}')
+                    self.logger.error(f'Error in loss calculation at iteration {i}:\n{e}')
                 return False
             
             loss.backward()
-            
             
             if stop_conditions.check(loss=loss.item(), report=report):
                 break
@@ -307,7 +305,7 @@ class MultiTaskSampler:
         with torch.no_grad(), gpytorch.settings.fast_pred_var():
             predictions = self.model.likelihood(self.model(x))
         
-        # retrieve
+        # retrieve estimates for each (input, task) pair
         y_means = predictions.mean
         y_vars = predictions.variance
         y_covar = predictions.covariance_matrix
@@ -320,8 +318,9 @@ class MultiTaskSampler:
         # inverse standardize...
         y_means = self.Y_stand.inv(y_means)
         sigma = self.Y_stand.params['sigma']
-        y_vars = y_vars * sigma**2
-        y_sig = np.sqrt(y_vars)
+        y_sigmas = np.sqrt(y_vars) * sigma
+        
+        # average across tasks
         y_mean = y_means.mean(axis=1)
         y_covar = y_covar * sigma**2
         y_sigma = np.array([np.sqrt(y_covar[i,:,i].sum()) for i in range(n)]) / m
@@ -334,10 +333,10 @@ class MultiTaskSampler:
         #-------------------------------------------------
         
         self.y_means = y_means
+        self.y_sigmas = y_sigmas
         self.y_mean = y_mean
-        self.y_sig = y_sig
         self.y_sigma = y_sigma
-        return y_mean, y_sigma, y_means, y_sig
+        return y_mean, y_sigma, y_means, y_sigmas
     
     def compare(self, y_ref):
         i = np.argmax(y_ref)
@@ -345,8 +344,9 @@ class MultiTaskSampler:
         # ref_best_checkpoint = self.X_feats[i]
         current_y_val = y_ref[self.current_best_idx]
         self.current_err = err = abs(current_y_val - y_ref_max)/y_ref_max
+        
         self.log('-'*100)
-        self.log(f'[ROUND-{self.round}]\tSTATS\t{self.current_best_checkpoint}\t{current_y_val:.4f}\t{err:.4g}\t{self.sample_fraction:.4f}')
+        # self.log(f'[ROUND-{self.round}]\tSTATS\t{self.current_best_checkpoint}\t{current_y_val:.4f}\t{err:.4g}\t{self.sample_fraction:.4f}')
         self.log(f'[ROUND-{self.round}]\tCURRENT BEST:\tCHECKPOINT-{self.current_best_checkpoint}\tY_PRED={current_y_val:.4f}\tY_ERR={100*err:.4g}%\t({100*self.sample_fraction:.2f}% sampled)')
         
     #-------------------------------------------------------------------------
@@ -395,7 +395,7 @@ class MultiTaskSampler:
 
         # Vectorized computation of all EI components
         mu = self.y_means[valid_i, valid_j]
-        sig = self.y_sig[valid_i, valid_j]
+        sig = self.y_sigmas[valid_i, valid_j]
 
         # Get row sums for each valid i
         row_sums = np.sum(self.y_means[valid_i, :], axis=1)
@@ -434,8 +434,8 @@ class MultiTaskSampler:
         #-----------------------------------------------------------
         # debug
         if debug:
-            self.plot_task(next_j, 'NO DAMPER', EI0.reshape(self.n, self.m)[:, next_j])
-            self.plot_task(next_j, 'before', EI.reshape(self.n, self.m)[:, next_j])
+            self.plot_task(next_j, '- NO DAMPER', EI0.reshape(self.n, self.m)[:, next_j])
+            self.plot_task(next_j, '- BEFORE', EI.reshape(self.n, self.m)[:, next_j])
         #------------------------------------------------------------
         
         # decay EI parameters
@@ -557,7 +557,7 @@ class MultiTaskSampler:
         legend.append('Posterior Mean')
         
         # confidences
-        win = 2 * self.y_sig[:, j]
+        win = 2 * self.y_sigmas[:, j]
         ax1.fill_between(x, self.y_means[:, j] - win, self.y_means[:, j] + win, alpha=0.5)
         legend.append('Confidence')
         
@@ -571,7 +571,7 @@ class MultiTaskSampler:
             
             # Plot fvals as green dashed line on secondary axis
             ax2.plot(x, fvals, 'g--')
-            ax2.set_ylabel('Acquisition Function Value', color='g')
+            ax2.set_ylabel('Expected Improvement', color='g')
             ax2.tick_params(axis='y', labelcolor='g')
             legend.append('EI')
         
