@@ -8,4 +8,5 @@ $$
 K_{icm} \left( (x,t),(x{\prime},t{\prime}) \right) = K_x(x,x{\prime}) \otimes K_t(t,t{\prime})
 $$
 
-Where x represents the input feature space, and t represents the task-space.  And so the kernel $K_x$ measures relationships between inputs, and the kernel $K_t$ measures relationships between tasks.  Since the input space $x$ is continuous/numerical, $K_x$ is an RBF kernel, which represents similarities between two inputs $x,x{\prime}$ as a function of the squared distance between them $|x-x{\prime}|^2$.
+The kernel $K_x$ measures relationships between inputs, and the kernel $K_t$ measures relationships between tasks.  Since the input space $x$ is continuous/numerical, $K_x$ is an RBF kernel, which represents similarities between input pairs $x,x{\prime}$ as a function of the squared distance between them $|x-x{\prime}|^2$. However, since tasks are categorical in nature (no intrinsic ordering) the task kernel $K_t$ is just a matrix of inter-task correlations which is learned from the observed data.  Instead of using a full rank matrix, though, $K_t$ is represented using a lower rank Cholesky factor $L s.t. K_t = LL^T$, which ensures that $K_t$ is P.S.D..  Additionally, using a lower rank matrix further encourages the model to learn correlations between tasks.
+
