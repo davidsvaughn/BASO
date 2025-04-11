@@ -20,9 +20,10 @@ Gaussian Process regression models are a popular choice, since they provide expl
 Standard GP regression would be suitable only for modeling the learning curve for a single benchmark. The difference between a Gaussian Process and a standard multivariate Gaussian probability distribution is that, in a GP model, the input space (in this case the space of model benchmarks) is the source of the "multiple dimensions" even though it lies along 1 dimension.  Suppose we only save model benchmarks every 50 steps, so we can only make observations where x is a multiple of 50.  We can still use a GP model to define a continuous function on the x domain. To make things simpler, lets define our input domain of interest to be the vector of positive integers up to 1000: $X_I = [1,2,3,...,1000]$.  We can imagine modeling the vector of function values $f(X_I) = [f(x_1),…,f(x_n)]$ as a multivariate Gaussian. Before making any observations, our *GP Prior* is defined as a multivariate normal distribution $f(X_I) \sim \mathcal{N}(\mu_0 \, \Sigma_0)$ where:
 
 $$
+\begin{aligned}
 \mu_0(X_I) = 0
-
 \Sigma_0(X_I) = K(X_I,X_I)
+\end{aligned}
 $$
 
 where $K$ is a pair-wise kernel function $k(x,x{\prime})$ used to express the correlation between function values $f(x)$ and $f(x{\prime})$. Since the input domain (model benchmarks) is numeric (as opposed to categorical) we would use an RBF kernel which represents similarities between input pairs $x,x{\prime}$ as a function of the squared distance between them $|x-x{\prime}|^2$, which encodes the intuition that model checkpoints that are closer together are expected to have more similar function values (i.e. benchmark scores) than two checkpoints that are farther apart. RBF: $K(x,x{\prime}) = σ² exp(-||x - x{\prime}||²/(2l²))$. $σ²$ and $l$ are RBF kernel hyperparameters...
@@ -33,9 +34,10 @@ Now suppose we observations $O = {X_O,Y_O}$ by evaluating the function at a set 
 We would update the model (conditional on the new observations) to obtain the posterior distribution $f(X_I)|O \sim \mathcal{N}(μ_1 \, \Sigma_1)$ where:
 
 $$
+\begin{aligned}
 μ_1(X_I) = K(X_I,X_O)^T K(X_O,X_O)^{-1}Y_O
-
 \Sigma_0(X_I) = K(X_I,X_I) - K(X_I,X_O)^T K(X_O,X_O)^{-1}K(X_I,X_O)
+\end{aligned}
 $$
 
 
