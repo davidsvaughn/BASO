@@ -302,8 +302,13 @@ class MultiTaskSampler:
                      
         #---- end train loop --------------------------------------------------
         
-        self.reset()
-        return True
+        if stop_conditions.last:
+            # fit has succeeded
+            self.reset()
+            return True
+        
+        # max iterations reached without convergence
+        return False
     #--------------------------------------------------------------------------
             
     def predict(self, x=None):
@@ -574,9 +579,9 @@ class MultiTaskSampler:
         legend = []
         plt.figure(figsize=(15, 10))
         plt.plot(self.X_feats, self.y_mean, 'b')
-        legend.append('Posterior Mean')
+        legend.append('GP Posterior Mean')
         plt.fill_between(self.X_feats, self.y_mean - 2*self.y_sigma, self.y_mean + 2*self.y_sigma, alpha=0.5)
-        legend.append('Confidence')
+        legend.append('2$\sigma$ Confidence')
         
         if y_ref is None and y_gold is not None:
             y_ref = y_gold
@@ -606,7 +611,7 @@ class MultiTaskSampler:
             legend.append('True Optimum')
             
         plt.axvline(self.current_best_checkpoint, color='b', linestyle='--')
-        legend.append('Current Optimum')
+        legend.append('GP Optimum')
         
         plt.legend(legend, loc='best')
         

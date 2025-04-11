@@ -171,7 +171,7 @@ class StoppingCondition:
         self.log(f"{self.prefix}*{self.lr_step}/{self.lr_steps}* Reduced learning rate to {lr:.4f}", 2)
         self._reset()
     
-    def check(self, i=1, **kwargs):
+    def _check(self, i=1, **kwargs):
         """
         Check if the stopping condition is met, and if so, how many times it has been met.
         If the number of times is less than patience, reduce the learning rate.
@@ -211,6 +211,10 @@ class StoppingCondition:
             
         return False
     
+    def check(self, i=1, **kwargs):
+        self.last = self._check(i=i, **kwargs)
+        return self.last
+    
 # 
 class StoppingConditions(StoppingCondition):
     """
@@ -235,7 +239,7 @@ class StoppingConditions(StoppingCondition):
         self.trackers = trackers
         self.mode = mode
 
-    def check(self, **kwargs):
+    def _check(self, **kwargs):
         payload = adict({'lr_reduced': False})
         
         stop = True if self.mode == 'all' else False

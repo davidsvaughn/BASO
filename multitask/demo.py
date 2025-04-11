@@ -183,7 +183,7 @@ log(f'REF BEST CHECKPOINT:\t{regression_best_checkpoint}\tY={regression_y_max:.4
 #--------------------------------------------------------------------------
 # run the sampler
 
-for _ in range(10):
+for _ in range(10): # try 10 times to complete the run without error
     
     try:
         # Subsample data
@@ -222,7 +222,8 @@ for _ in range(10):
             # sampler.compare(Y_ref, Y_test)
             sampler.compare(Y_test)
             sampler.plot_task(next_task, '- AFTER')
-            sampler.plot_posterior_mean(Y_ref_mean, Y_test_mean)
+            sampler.plot_posterior_mean(y_gold=Y_test_mean)
+            # sampler.plot_posterior_mean(Y_ref_mean, Y_test_mean)
             
         break
         
