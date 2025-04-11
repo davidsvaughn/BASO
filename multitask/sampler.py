@@ -368,7 +368,9 @@ class MultiTaskSampler:
             plt.scatter(Y_ref_corr, Y_est_corr, alpha=0.5)
             plt.xlabel('Reference Correlation')
             plt.ylabel('Estimated Correlation')
-            plt.title(f'Round {self.round}\tR^2 {r2:.4f}')
+            # plt.title(f'Round {self.round}  R^2 {r2:.4f}')
+            # make R superscript 2 in title
+            plt.title(f'Round {self.round} : R$^2$={r2:.4f}')
             plt.plot([-1, 1], [-1, 1], 'r--')
             plt.xlim(-1, 1)
             plt.ylim(-1, 1)
@@ -398,7 +400,7 @@ class MultiTaskSampler:
         else:
             self.log(f'[ROUND-{self.round}]\tSTATS\t{self.round}\t{self.current_best_checkpoint}\t{Tr2:.4g}\t{err:.4g}\t{self.sample_fraction:.4g}')
         
-        self.log(f'[ROUND-{self.round}]\tCURRENT BEST:\tCHECKPOINT-{self.current_best_checkpoint}\tR^2{Tr2:.4f}\tY_PRED={current_y_val:.4f}\tY_ERR={100*err:.4g}%\t({100*self.sample_fraction:.2f}% sampled)')
+        self.log(f'[ROUND-{self.round}]\tCURRENT BEST:\tCHECKPOINT-{self.current_best_checkpoint}\tR$^2$={Tr2:.4f}\tY_PRED={current_y_val:.4f}\tY_ERR={100*err:.4g}%\t({100*self.sample_fraction:.2f}% sampled)')
         
     #-------------------------------------------------------------------------
     

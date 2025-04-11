@@ -4,9 +4,21 @@ Bayesian Optimization using Multi-task Gaussian Process Regression.
 
 We have a set of model checkpoints saved periodically during training (usually saved at equally spaced intervals but this is not a requirement). In addition, we have a set of benchmark tasks we can run on a model to get a score. We would like to find the model checkpoint that performs the best overall on the benchmarks (i.e. has the highest average score - averaged over all benchmarks). However, running a model checkpoint on a benchmark is costly. Suppose that running a single model on a single benchmark takes 1 minute, and we have 100 model checkpoints and 100 benchmark tasks. Running all models on all tasks would take 10000 minutes == 1 week. This case may be rather extreme, but even in less extreme cases we would like to find ways of reliably estimating the best overall model checkpoint without running all model-task pairs.
 
+Bayesian Optimization is a common approach for such optimization scenarios, when the function we are trying to optimize is expensive to compute. Sometimes it's called "black-box" optimization since we treat the function $f$ as a "black-box" and only have access to it by querying it's value at specific points. The basic approach is to repeatedly query the function so as to acquire more sample points with which to estimate a regression model, the main steps being:
+
+1. fit a regression model using function evaluations queried so far
+2. use the regression model to decide the next point to query
+
+It's important to remember that the main goal is to optimize $f$ (i.e. find the max, or argmax...), not really to fit a full regression model to $f$. Of course, if we had a really good regression model, we could exploit it to easily find the max. So, there is an inherent trade-off at play during Bayesian optimization between (a) optimizing the quality of the regression model and (b) optimizing the function we are modeling. Sometimes this is called the exploration-vs-exploitation trade-off. Since step 1 above is fairly straightforward, this trade-off comes into play only in step 2, where we must decide how to choose the next query point.  
+Gaussian Process regression models are a popular choice, since they provide explicit uncertainty estimates that can be used to guide step 2. 
+
 One possible solution might be to take each benchmark separately, run it on a subset of all the model checkpoints, and then try to fit a simple regression model to these "observed" score outputs to estimate the unobserved scores (i.e. for the untested checkpoints). In most cases, these types of holdout-set (validation-set) performance curves follow a predictable pattern: they're either roughly monotonic (rising or falling) or exhibit a roughly unimodal (rise-and-fall) shape, as the model first learns generalizable patterns and then eventually starts to overfit the training data. Gaussian Process Regression is one approach...
 
 Although each benchmark task may have it's own unique curve, since we are running the same set of checkpoints through each task there is almost certainly some relationship between many of these curves.  Some pairs may be highly correlated, while others not so much.  We would like to be able to share information across tasks to reduce the number of observations required, but we don't know what these inter-task relationships are a-priori. A multi-task regression method that could jointly learn these inter-task correlations AND use these correlations to share information between task-specific regression curves would be useful in this situation.
+
+Gaussian process regression is a flexible, non-parametric regression model highly suitable for such cases, 
+
+since there is an established extension to the single-output case called "multi-output" or "multi-task" Gaussian processes.
 
 
 This formulation uses the ICM kernel (ICM = intrinsic co-regionalization model), which was proposed here as a way to induce/learn inter-task correlations.

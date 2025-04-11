@@ -40,7 +40,7 @@ rank_fraction = 0.25
 
 # Expected Improvement parameters...
 ei_beta = 0.5
-# deta decay: ei_beta will be ei_f of its start value when ei_t of all points have been sampled
+# deta decay: ei_beta will be ei_f of its start value (i.e. 0.1) when ei_t of all points have been sampled
 ei_f, ei_t = 0.2, 0.05
 # ei_gamma = 0.9925
 
