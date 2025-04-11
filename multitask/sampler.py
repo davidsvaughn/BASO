@@ -44,6 +44,8 @@ class MultiTaskSampler:
                  max_iterations=1000,
                  lr=0.1, # learning rate for MLE fit
                  patience=5,
+                 loss_thresh=0.0005,
+                 degree_thresh=3,
                  max_sample_fraction=0.25, 
                  rank_fraction=0.5,
                  eta=0.25,
@@ -79,6 +81,8 @@ class MultiTaskSampler:
         self.max_iterations = max_iterations
         self.min_iterations = min_iterations
         self.patience = patience
+        self.loss_thresh = loss_thresh
+        self.degree_thresh = degree_thresh
         self.max_sample_fraction = max_sample_fraction
         self.rank_fraction = rank_fraction
         self.eta = eta
@@ -223,41 +227,47 @@ class MultiTaskSampler:
         
         #---------------------------------------------------------
         # Stopping Criteria...
+        cond_list = []
         
         #-----------------------------------
         # relative change stopping criterion
-        loss_condition = StoppingCondition(
-            value="loss",
-            condition="0 < (x[-2] - x[-1])/abs(x[-2]) < t",
-            t=0.0005,
-            alpha=5,
-            min_iterations=min_iterations,
-            patience=patience,
-            lr_steps=5, # learning rate lowered 5 times before termination
-            lr_gamma=0.8,
-            optimizer=optimizer,
-            verbosity=self.verbosity,
-        )
+        if self.loss_thresh is not None:
+            
+            loss_condition = StoppingCondition(
+                value="loss",
+                condition="0 < (x[-2] - x[-1])/abs(x[-2]) < t",
+                t=self.loss_thresh,
+                alpha=5,
+                min_iterations=min_iterations,
+                patience=patience,
+                lr_steps=5, # learning rate lowered 5 times before termination
+                lr_gamma=0.8,
+                optimizer=optimizer,
+                verbosity=self.verbosity,
+            )
+            cond_list.append(loss_condition)
         
         #-----------------------------------
-        # max-degree stopping criterion
+        # max-degree stopping criterion ( if there has been at least one previous failure )
+        if self.degree_thresh is not None and self.num_retries > 0:
         
-        # function closure for max_degree metric
-        def max_degree(**kwargs):
-            return degree_metric(model=self.model, X_inputs=self.X_inputs, m=self.m, num_trials=100)['max']
-        
-        degree_condition = StoppingCondition(
-            value=max_degree,
-            condition="x[-1] > t",
-            t=3,
-            interval=5, # check every 5 iterations
-            min_iterations=min_iterations,
-            verbosity=self.verbosity,
-        )
+            # function closure for max_degree metric
+            def max_degree(**kwargs):
+                return degree_metric(model=self.model, X_inputs=self.X_inputs, m=self.m, num_trials=100)['max']
+            
+            degree_condition = StoppingCondition(
+                value=max_degree,
+                condition="x[-1] > t",
+                t=self.degree_thresh,
+                interval=5, # check every 5 iterations
+                min_iterations=min_iterations,
+                verbosity=self.verbosity,
+            )
+            cond_list.append(degree_condition)
         
         #------------------------------------
         # combine stopping conditions (at least one must be satisfied)
-        stop_conditions = StoppingConditions([loss_condition, degree_condition], mode='any')
+        stop_conditions = StoppingConditions(cond_list, mode='any')
         
         #---------------------------------------------------------
         
@@ -331,6 +341,13 @@ class MultiTaskSampler:
         # current_y_mean = y_mean[i] # current y_mean estimate at peak_idx of y_mean estimate
         
         #-------------------------------------------------
+        # fetch inter-task correlation estimates from task kernel Kt
+        # with torch.no_grad():
+        #     task_covar = self.model.task_covar_module.covar_matrix.to_dense()
+        # # Compute correlations from covariances
+        # diag_std = task_covar.diag().sqrt()
+        # self.task_corr = (task_covar / (diag_std.unsqueeze(-1) * diag_std.unsqueeze(0))).cpu().numpy()
+        #-------------------------------------------------
         
         self.y_means = y_means
         self.y_sigmas = y_sigmas
@@ -338,16 +355,50 @@ class MultiTaskSampler:
         self.y_sigma = y_sigma
         return y_mean, y_sigma, y_means, y_sigmas
     
-    def compare(self, y_ref):
-        i = np.argmax(y_ref)
-        y_ref_max = y_ref[i]
+    def get_r2(self, Y_ref, plot=True):
+        Y_ref_corr = np.corrcoef(Y_ref.T)
+        Y_ref_corr = np.tril(Y_ref_corr, k=-1).flatten()
+        Y_est_corr = np.corrcoef(self.y_means.T)
+        Y_est_corr = np.tril(Y_est_corr, k=-1).flatten()
+        r2 = np.corrcoef(Y_ref_corr, Y_est_corr)[0, 1]**2
+        
+        # make scatterplot of Y_ref_corr vs Y_est_corr
+        if plot:
+            plt.figure(figsize=(10, 10))
+            plt.scatter(Y_ref_corr, Y_est_corr, alpha=0.5)
+            plt.xlabel('Reference Correlation')
+            plt.ylabel('Estimated Correlation')
+            plt.title(f'Round {self.round}\tR^2 {r2:.4f}')
+            plt.plot([-1, 1], [-1, 1], 'r--')
+            plt.xlim(-1, 1)
+            plt.ylim(-1, 1)
+            plt.grid()
+            plt.gca().set_aspect('equal', adjustable='box')
+            self.display(prefix='Corr')
+        
+        return r2
+    
+    def compare(self, Y_ref, Y_gold=None):
+        Tr2 = self.get_r2(Y_ref)
+        
+        # get reference mean across tasks
+        Y_ref_mean = Y_ref.mean(axis=1)
+        i = np.argmax(Y_ref_mean)
+        y_ref_max = Y_ref_mean[i]
         # ref_best_checkpoint = self.X_feats[i]
         
-        current_y_val = y_ref[self.current_best_idx]
+        current_y_val = Y_ref_mean[self.current_best_idx]
         self.current_err = err = abs(current_y_val - y_ref_max)/y_ref_max
         
         self.log('-'*100)
-        self.log(f'[ROUND-{self.round}]\tCURRENT BEST:\tCHECKPOINT-{self.current_best_checkpoint}\tY_PRED={current_y_val:.4f}\tY_ERR={100*err:.4g}%\t({100*self.sample_fraction:.2f}% sampled)')
+        
+        if Y_gold is not None:
+            Gr2 = self.get_r2(Y_gold, plot=False)
+            self.log(f'[ROUND-{self.round}]\tSTATS\t{self.round}\t{self.current_best_checkpoint}\t{Tr2:.4g}\t{Gr2:.4g}\t{err:.4g}\t{self.sample_fraction:.4g}')
+        else:
+            self.log(f'[ROUND-{self.round}]\tSTATS\t{self.round}\t{self.current_best_checkpoint}\t{Tr2:.4g}\t{err:.4g}\t{self.sample_fraction:.4g}')
+        
+        self.log(f'[ROUND-{self.round}]\tCURRENT BEST:\tCHECKPOINT-{self.current_best_checkpoint}\tR^2{Tr2:.4f}\tY_PRED={current_y_val:.4f}\tY_ERR={100*err:.4g}%\t({100*self.sample_fraction:.2f}% sampled)')
         
     #-------------------------------------------------------------------------
     
@@ -517,7 +568,7 @@ class MultiTaskSampler:
     def display(self, fig=None, fn=None, prefix='fig'):
         display_fig(self.run_dir, fig=fig, fn=fn, prefix=prefix)
     
-    def plot_posterior_mean(self, y_ref=None, prefix='posterior_mean'):
+    def plot_posterior_mean(self, y_ref=None, y_gold=None, ref_color='g', gold_color='r', prefix='posterior_mean'):
         legend = []
         plt.figure(figsize=(15, 10))
         plt.plot(self.X_feats, self.y_mean, 'b')
@@ -525,16 +576,32 @@ class MultiTaskSampler:
         plt.fill_between(self.X_feats, self.y_mean - 2*self.y_sigma, self.y_mean + 2*self.y_sigma, alpha=0.5)
         legend.append('Confidence')
         
+        if y_ref is None and y_gold is not None:
+            y_ref = y_gold
+            y_gold = None
+            ref_color = gold_color
+        
         # compare to reference
         if y_ref is not None:
             i = np.argmax(y_ref)
             ref_best_input = self.X_feats[i]
-            plt.plot(self.X_feats, y_ref, 'g')
+            plt.plot(self.X_feats, y_ref, ref_color)
             legend.append('Target Mean')
             
             # draw vertical dotted line at best input
-            plt.axvline(ref_best_input, color='g', linestyle='--')
+            plt.axvline(ref_best_input, color=ref_color, linestyle='--')
             legend.append('Target Optimum')
+            
+        # compare to gold standard
+        if y_gold is not None:
+            i = np.argmax(y_gold)
+            gold_best_input = self.X_feats[i]
+            plt.plot(self.X_feats, y_gold, gold_color)
+            legend.append('True Mean')
+            
+            # draw vertical dotted line at best input
+            plt.axvline(gold_best_input, color=gold_color, linestyle='--')
+            legend.append('True Optimum')
             
         plt.axvline(self.current_best_checkpoint, color='b', linestyle='--')
         legend.append('Current Optimum')

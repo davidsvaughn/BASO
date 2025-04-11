@@ -53,6 +53,7 @@ class StoppingCondition:
         self.consecutive_count = 0
         self.lr_step = 0
         self.message_log = []
+        self.stop = False
         self.logger = logging.getLogger(__name__)
         
         # condition must be a string with 'x' as the variable, and optionally 't'
@@ -187,6 +188,9 @@ class StoppingCondition:
         bool
             True if the stopping condition is met, False otherwise.
         """
+        if self.stop:
+            return True
+        
         self.iteration += i
         success = self._eval(**kwargs)
         
@@ -197,12 +201,14 @@ class StoppingCondition:
                 if self.optimizer is None or self.lr_step==self.lr_steps:
                     last_msg = self.message_log[-1] if self.message_log else ""
                     self.log(f"{self.prefix}STOPPING!\t{last_msg}", 1)
+                    self.stop = True
                     return True
                 
                 else:
                     self._reduce_lr(**kwargs)
         else:
             self.consecutive_count = 0
+            
         return False
     
 # 

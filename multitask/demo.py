@@ -20,7 +20,7 @@ rank_fraction = -1
 # SET PARAMETERS
 
 fn = 'phi4-math-4claude.txt'
-fn = 'phi4-bw-4claude.txt'
+# fn = 'phi4-bw-4claude.txt'
 
 # rand_seed = 2951
 
@@ -31,7 +31,7 @@ n_obs    = 2
 
 # select random subset of tasks
 task_sample = 1.0
-# task_sample = 0.5
+# task_sample = 0.35
 
 # multi-task lkj prior
 eta = 0.25
@@ -141,24 +141,30 @@ log(f'FYI: ei_gamma: {ei_gamma:.4g}')
 
 #--------------------------------------------------------------------------
 # Train regression model on all data for gold standard
-Y_test_reg = None
+Y_ref = None
 
-Y_test_reg = Y_test.mean(axis=1) # shortcut (just take the mean across tasks)
+# Y_ref = Y_test.copy()
 
-if Y_test_reg is None:
+if Y_ref is None:
     sampler = MultiTaskSampler(X_feats, Y_test, 
                                Y_test=Y_test,
                                eta=None,
+                               patience=5,
+                               degree_thresh=None,
                                min_iterations=100,
                                max_iterations=1000,
-                               patience=10,
                                rank_fraction=0.5,
                                log_interval=10,
                                use_cuda=use_cuda,
                                run_dir=run_dir,
                                )
     # Fit model to full dataset
-    Y_test_reg, _,_,_ = sampler.update()
+    _, _, Y_ref, _ = sampler.update()
+    
+    sampler.compare(Y_test)
+
+Y_ref_mean = Y_ref.mean(axis=1)
+Y_test_mean = Y_test.mean(axis=1)
 
 #--------------------------------------------------------------------------
 # find best checkpoint
@@ -167,9 +173,9 @@ best_idx = np.argmax(Y_test.mean(axis=1))
 best_y_mean = Y_test.mean(axis=1)[best_idx]
 best_checkpoint = X_feats[best_idx]
 
-i = np.argmax(Y_test_reg)
+i = np.argmax(Y_ref_mean)
 regression_best_checkpoint = X_feats[i]
-regression_y_max = Y_test_reg[i]
+regression_y_max = Y_ref_mean[i]
 
 log(f'TRU BEST CHECKPOINT:\t{best_checkpoint}\tY={best_y_mean:.4f}')
 log(f'REF BEST CHECKPOINT:\t{regression_best_checkpoint}\tY={regression_y_max:.4f}')
@@ -205,16 +211,18 @@ for _ in range(10):
 
         # Fit model to initial samples
         sampler.update()
-        sampler.compare(Y_test_reg)
+        # sampler.compare(Y_ref, Y_test)
+        sampler.compare(Y_test)
         # sampler.plot_all(max_fig=10)
 
         # Run Bayesian optimization loop
         while sampler.sample_fraction < max_sample_fraction:
             _, next_task = sampler.add_next_sample()
             sampler.update()
-            sampler.compare(Y_test_reg)
+            # sampler.compare(Y_ref, Y_test)
+            sampler.compare(Y_test)
             sampler.plot_task(next_task, '- AFTER')
-            sampler.plot_posterior_mean(Y_test_reg)
+            sampler.plot_posterior_mean(Y_ref_mean, Y_test_mean)
             
         break
         
