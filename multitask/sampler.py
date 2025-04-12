@@ -41,10 +41,10 @@ class MultiTaskSampler:
                  Y_obs,
                  Y_test=None,
                  min_iterations=50,
-                 max_iterations=1000,
+                 max_iterations=2000,
                  lr=0.1, # learning rate for MLE fit
                  patience=5,
-                 loss_thresh=0.0005,
+                 loss_thresh=0.0001,
                  degree_thresh=3,
                  max_sample_fraction=0.25, 
                  rank_fraction=0.5,
@@ -176,6 +176,7 @@ class MultiTaskSampler:
         eta = self.eta
         patience = self.patience
         min_iterations = self.min_iterations
+        loss_thresh = self.loss_thresh
         
         #---------------------------------------------------------------------
         # if fit is failing...
@@ -194,6 +195,7 @@ class MultiTaskSampler:
             # patience, min_iterations adjustment...
             patience = max(5, patience - self.num_retries//2)
             min_iterations = max(50, min_iterations - 10*self.num_retries//2)
+            loss_thresh = self.loss_thresh * min(5, 1 + self.num_retries/2)
                 
         #---------------------------------------------------------------------
         # define task_covar_prior (IMPORTANT!!! with sparse data, nothing works without this!)
@@ -236,7 +238,7 @@ class MultiTaskSampler:
             loss_condition = StoppingCondition(
                 value="loss",
                 condition="0 < (x[-2] - x[-1])/abs(x[-2]) < t",
-                t=self.loss_thresh,
+                t=loss_thresh,
                 alpha=5,
                 min_iterations=min_iterations,
                 patience=patience,
@@ -249,7 +251,7 @@ class MultiTaskSampler:
         
         #-----------------------------------
         # max-degree stopping criterion ( if there has been at least one previous failure )
-        if self.degree_thresh is not None and self.num_retries > 0:
+        if self.degree_thresh is not None and self.num_retries > self.max_retries//2:
         
             # function closure for max_degree metric
             def max_degree(**kwargs):

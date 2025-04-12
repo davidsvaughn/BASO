@@ -27,7 +27,7 @@ fn = 'phi4-math-4claude.txt'
 # number of random obs-per-task (opt) to initially sample
 # if <1, then fraction of total obs
 n_obs    = 2
-# n_obs    = 0.04
+# n_obs    = 0.1
 
 # select random subset of tasks
 task_sample = 1.0
@@ -35,8 +35,8 @@ task_sample = 1.0
 
 # multi-task lkj prior
 eta = 0.25
-eta_gamma = 0.9
-rank_fraction = 0.25
+eta_gamma = 0.99
+rank_fraction = 0.5 # 0.25
 
 # Expected Improvement parameters...
 ei_beta = 0.5
@@ -194,12 +194,13 @@ for _ in range(10): # try 10 times to complete the run without error
         # Initialize the sampler
         sampler = MultiTaskSampler(X_feats, Y_obs,
                                    Y_test=Y_test,
+                                   loss_thresh=0.0001,
                                    eta=eta,
                                    eta_gamma=eta_gamma,
                                    ei_beta=ei_beta,
                                    ei_gamma=ei_gamma,
                                    min_iterations=50,
-                                   max_iterations=1000,
+                                   max_iterations=2000,
                                    max_retries=20,
                                    verbosity=1,
                                    max_sample_fraction=max_sample_fraction, 
@@ -211,16 +212,16 @@ for _ in range(10): # try 10 times to complete the run without error
 
         # Fit model to initial samples
         sampler.update()
-        # sampler.compare(Y_ref, Y_test)
-        sampler.compare(Y_test)
+        sampler.compare(Y_ref, Y_test)
+        # sampler.compare(Y_test)
         # sampler.plot_all(max_fig=10)
 
         # Run Bayesian optimization loop
         while sampler.sample_fraction < max_sample_fraction:
             _, next_task = sampler.add_next_sample()
             sampler.update()
-            # sampler.compare(Y_ref, Y_test)
-            sampler.compare(Y_test)
+            sampler.compare(Y_ref, Y_test)
+            # sampler.compare(Y_test)
             sampler.plot_task(next_task, '- AFTER')
             sampler.plot_posterior_mean(y_gold=Y_test_mean)
             # sampler.plot_posterior_mean(Y_ref_mean, Y_test_mean)

@@ -26,7 +26,7 @@ $$
 \end{aligned}
 $$
 
-where $K$ is a pair-wise kernel function $k(x,x{\prime})$ used to express the correlation between function values $f(x)$ and $f(x{\prime})$. Since the input domain (model benchmarks) is numeric (as opposed to categorical) we would use an RBF kernel which represents similarities between input pairs $x,x{\prime}$ as a function of the squared distance between them $|x-x{\prime}|^2$, which encodes the intuition that model checkpoints that are closer together are expected to have more similar function values (i.e. benchmark scores) than two checkpoints that are farther apart. RBF: $K(x,x{\prime}) = σ² exp(-||x - x{\prime}||²/(2l²))$. $σ²$ and $l$ are RBF kernel hyperparameters...
+where $K$ is a pair-wise kernel function $k(x,x{\prime})$ used to express the correlation between function values $f(x)$ and $f(x{\prime})$. Since the input domain (model benchmarks) is numeric (as opposed to categorical) we would use an RBF kernel which represents similarities between input pairs $x,x{\prime}$ as a function of the squared distance between them $|x-x{\prime}|^2$, which encodes the intuition that model checkpoints that are closer together are expected to have more similar function values (i.e. benchmark scores) than two checkpoints that are farther apart. RBF: $K(x,x{\prime}) = σ² exp(-|x-x{\prime}|²/(2l²))$. $σ²$ and $l$ are RBF kernel hyperparameters...
 
 
 Now suppose we observations $O = {X_O,Y_O}$ by evaluating the function at a set of points $X_O = [x_1, x_2, ..., x_n]$ to obtain scores $Y_O = [y_1, y_2,...,y_n] $
