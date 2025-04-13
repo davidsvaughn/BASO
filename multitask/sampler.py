@@ -189,9 +189,10 @@ class MultiTaskSampler:
                 self.log(f'[ROUND-{self.round}]\tFYI: rank adjusted to {rank}', 2)
                 
             # eta adjustment... ??
-            eta = eta * (self.eta_gamma ** max(0, self.num_retries - self.max_retries//2))
-            self.log(f'[ROUND-{self.round}]\tFYI: eta adjusted to {eta:.4g}', 2)
-            
+            if eta is not None:
+                eta = eta * (self.eta_gamma ** max(0, self.num_retries - self.max_retries//2))
+                self.log(f'[ROUND-{self.round}]\tFYI: eta adjusted to {eta:.4g}', 2)
+                
             # patience, min_iterations adjustment...
             patience = max(5, patience - self.num_retries//2)
             min_iterations = max(50, min_iterations - 10*self.num_retries//2)

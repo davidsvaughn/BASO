@@ -17,12 +17,12 @@ It's important to remember that the end goal is to optimize $f$ (i.e. find the m
 Gaussian Process regression models are a popular choice, since they provide explicit uncertainty estimates that can be used to guide step 2. Another reason they are convenient for Bayesian Optimization is that the priors, marginals, and posterior (conditional) means and variances are all expressible in closed form as multivariate Gaussian (normal) distributions, which makes it easy to repeatedly perform Bayesian updates to our model as we observe more data points.
 
 
-Standard GP regression would be suitable only for modeling the learning curve for a single benchmark. The difference between a Gaussian Process and a standard multivariate Gaussian probability distribution is that, in a GP model, the input space (in this case the space of model benchmarks) is the source of the "multiple dimensions" even though it lies along 1 dimension.  Suppose we only save model benchmarks every 50 steps, so we can only make observations where x is a multiple of 50.  We can still use a GP model to define a continuous function on the x domain. To make things simpler, lets define our input domain of interest to be the vector of positive integers up to 1000: $X_I = [1,2,3,...,1000]$.  We can imagine modeling the vector of function values $f(X_I) = [f(x_1),…,f(x_n)]$ as a multivariate Gaussian. Before making any observations, our *GP Prior* is defined as a multivariate normal distribution $f(X_I) \sim \mathcal{N}(\mu_0 \, \Sigma_0)$ where:
+Standard GP regression would be suitable only for modeling the learning curve for a single benchmark. The difference between a Gaussian Process and a standard multivariate Gaussian probability distribution is that, in a GP model, the input space (in this case the space of model benchmarks) is the source of the "multiple dimensions" even though it lies along 1 dimension.  Suppose we only save model benchmarks every 50 steps, so we can only make observations where x is a multiple of 50.  We can still use a GP model to define a continuous function on the x domain. To make things simpler, lets define our input domain of interest $X_I$ to be the vector of positive integers 1 to 1000: $X_I = [1,2,3,...,1000]$.  We can imagine modeling the vector of function values $f(X_I) = [f(x_1),…,f(x_n)]$ as a multivariate Gaussian. Before making any observations, our *GP Prior* on this domain is defined as a multivariate normal distribution $f(X_I) \sim \mathcal{N}(\mu_0 \, \Sigma_0)$ where:
 
 $$
 \begin{aligned}
-\mu_0(X_I) = 0
-\Sigma_0(X_I) = K(X_I,X_I)
+\mu_0(X_I) &= 0 \\
+\Sigma_0(X_I) &= K(X_I,X_I)
 \end{aligned}
 $$
 
@@ -33,12 +33,7 @@ Now suppose we observations $O = {X_O,Y_O}$ by evaluating the function at a set 
 
 We would update the model (conditional on the new observations) to obtain the posterior distribution $f(X_I)|O \sim \mathcal{N}(μ_1 \, \Sigma_1)$ where:
 
-$$
-\begin{aligned}
-μ_1(X_I) = K(X_I,X_O)^T K(X_O,X_O)^{-1}Y_O
-\Sigma_0(X_I) = K(X_I,X_I) - K(X_I,X_O)^T K(X_O,X_O)^{-1}K(X_I,X_O)
-\end{aligned}
-$$
+<iframe src="https://math.embed.fun/embed/gzhyaE7K1qM2GbbeG57U7m" frameborder="0" width="512" height="172"></iframe>
 
 
 

@@ -152,9 +152,10 @@ if Y_ref is None:
                                patience=5,
                                degree_thresh=None,
                                min_iterations=100,
-                               max_iterations=1000,
+                               max_iterations=2000,
+                               max_retries=10,
                                rank_fraction=0.5,
-                               log_interval=10,
+                               log_interval=25,
                                use_cuda=use_cuda,
                                run_dir=run_dir,
                                )
@@ -223,8 +224,8 @@ for _ in range(10): # try 10 times to complete the run without error
             sampler.compare(Y_ref, Y_test)
             # sampler.compare(Y_test)
             sampler.plot_task(next_task, '- AFTER')
-            sampler.plot_posterior_mean(y_gold=Y_test_mean)
-            # sampler.plot_posterior_mean(Y_ref_mean, Y_test_mean)
+            # sampler.plot_posterior_mean(y_gold=Y_test_mean)
+            sampler.plot_posterior_mean(Y_ref_mean, Y_test_mean)
             
         break
         
