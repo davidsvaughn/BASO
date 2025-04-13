@@ -20,9 +20,9 @@ Gaussian Process regression models are a popular choice, since they provide expl
 Standard GP regression would be suitable only for modeling the learning curve for a single benchmark. The difference between a Gaussian Process and a standard multivariate Gaussian probability distribution is that, in a GP model, the input space (in this case the space of model benchmarks) is the source of the "multiple dimensions" even though it lies along 1 dimension.  Suppose we only save model benchmarks every 50 steps, so we can only make observations where x is a multiple of 50.  We can still use a GP model to define a continuous function on the x domain. To make things simpler, lets define a discrete input domain $X_I$ as the vector of positive integers 1 to 1000: $X_I = [1,2,3,...,1000]$.  We can imagine modeling the vector of function values at each of these points $f(X_I) = [f(x_1),…,f(x_n)]$ as a multivariate Gaussian. Before making any observations, our *GP Prior* over this domain is defined as a multivariate normal distribution:
 
 ```math
-f(X_I) \sim \mathcal{N}(\mu_0 \, \Sigma_0)
-{    s.t.   }
-\begin{aligned}
+f(X_I) \sim \mathcal{N}(\mu_0 \, \Sigma_0) \\
+{    s.t.   } \\
+\begin{aligned} \\
 \mu_0(X_I) &= 0 \\
 \Sigma_0(X_I) &= K(X_I,X_I)
 \end{aligned}
@@ -40,9 +40,9 @@ with hyperparameters $l$ and $σ²$ representing input-scale and output-scale.
 Now suppose we acquire a set of observations $O = {X_O,Y_O}$ by evaluating the function at a set of points $X_O = [x_1, x_2, ..., x_n]$ to obtain scores $Y_O = [y_1, y_2,...,y_n]$ where $y_i = f(X_i)$. We would update the model (conditional on the new observations) to obtain the posterior distribution 
 
 ```math
-f(X_I)|O \sim \mathcal{N}(μ_1 \, \Sigma_1)
-{    s.t.   }
-\begin{aligned}
+f(X_I)|O \sim \mathcal{N}(μ_1 \, \Sigma_1) \\
+{    s.t.   } \\
+\begin{aligned} \\
 μ_1(X_I) &= K(X_I,X_O)^T   K(X_O,X_O)^{-1}Y_O \\
 \Sigma_1(X_I) &= K(X_I,X_I) - K(X_I,X_O)^T K(X_O,X_O)^{-1}K(X_I,X_O)
 \end{aligned}
