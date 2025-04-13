@@ -21,7 +21,7 @@ Standard GP regression would be suitable only for modeling the learning curve fo
 
 $$
 f(X_I) \sim \mathcal{N}(\mu_0 \, \Sigma_0) \\
-\text{ \ital{where:} } \\
+\text{   where:   } \\
 \begin{aligned} \\
 \mu_0(X_I) &= 0 \\
 \Sigma_0(X_I) &= K(X_I,X_I)
