@@ -17,7 +17,7 @@ It's important to remember that the end goal is to optimize $f$ (i.e. find the m
 Gaussian Process regression models are a popular choice, since they provide explicit uncertainty estimates that can be used to guide step 2. Another reason they are convenient for Bayesian Optimization is that the priors, marginals, and posterior (conditional) means and variances are all expressible in closed form as multivariate Gaussian (normal) distributions, which makes it easy to repeatedly perform Bayesian updates to our model as we observe more data points.
 
 
-Standard GP regression would be suitable only for modeling the learning curve for a single benchmark. The difference between a Gaussian Process and a standard multivariate Gaussian probability distribution is that, in a GP model, the input space (in this case the space of model benchmarks) is the source of the "multiple dimensions" even though it lies along 1 dimension.  Suppose we only save model benchmarks every 50 steps, so we can only make observations where x is a multiple of 50.  We can still use a GP model to define a continuous function on the x domain. To make things simpler, lets define a discrete input domain $X_I$ as the vector of positive integers 1 to 1000: $X_I = [1,2,3,...,1000]$.  We can imagine modeling the vector of function values at each of these points $f(X_I) = [f(x_1),…,f(x_n)]$ as a multivariate Gaussian. Before making any observations, our *GP Prior* over this domain is defined as a multivariate normal distribution:
+Standard GP regression is well suited for modeling the learning curve of a single benchmark. What makes a Gaussian Process different from a standard multivariate Gaussian probability distribution is that, in a GP model, the input space (in this case the space of model benchmarks) is the source of the "multiple dimensions" even though it lies along 1 dimension. Suppose we only save model benchmarks every 50 steps, up to 1000, so we can only make observations $f(x)$ when $x$ is drawn from $[0, 50, 100, 150, ..., 1000]$.  We can still use a GP regression model to define a continuous function over the entire interval $[0..1000]$. To make things simpler, let's instead define a discrete input domain $X_I$ as the vector of positive integers 1 to 1000: $X_I = [1,2,3,...,1000]$.  We can imagine modeling the vector of function values at each of these points $f(X_I) = [f(x_1),…,f(x_n)]$ as a multivariate Gaussian. Before making any observations, our *GP Prior* over this domain is defined as a multivariate normal distribution:
 
 ```math
 f(X_I) \sim \mathcal{N}(\mu_0 \, \Sigma_0) \\
@@ -31,13 +31,14 @@ f(X_I) \sim \mathcal{N}(\mu_0 \, \Sigma_0) \\
 where $K$ is a pair-wise kernel function $k(x,x{\prime})$ used to express the correlation between function values $f(x)$ and $f(x{\prime})$. Since the input domain (of model benchmarks) is numeric (as opposed to categorical) we would use an RBF kernel, which represents similarities between input pairs $x,x{\prime}$ as a function of the squared distance between them $|x-x{\prime}|^2$, encoding the intuition that model checkpoints that are closer together are expected to have more similar function values (i.e. benchmark scores) than two checkpoints that are farther apart. The RBF (Radial Basis Function) kernel is expressed as: 
 
 $$
-K_{RBF}(x,x{\prime}) = σ^2 \exp{ \frac{ -|x-x{\prime}|^2}{2l^2} }
+K_{RBF}(x,x{\prime}) = σ^2 \exp{ \frac{ -|x-x{\prime}|^2}{2l^2} } \\
+k(x_a, x_b) = \\exp{ \\left( -\\frac{1}{2\\sigma^2} \\lVert x_a - x_b \\rVert^2 \\right)}
 $$
 
-with hyperparameters $l$ and $σ²$ representing input-scale and output-scale.
+where hyperparameters $l$ and $σ²$ represent input-scale and output-scale, respectively.
 
 
-Now suppose we acquire a set of observations $O = {X_O,Y_O}$ by evaluating the function at a set of points $X_O = [x_1, x_2, ..., x_n]$ to obtain scores $Y_O = [y_1, y_2,...,y_n]$ where $y_i = f(X_i)$. We would update the model (conditional on the new observations) to obtain the posterior distribution 
+Now suppose we acquire a set of observations $O = {X_O,Y_O}$ by evaluating the function at a set of points (i.e. model checkpoints) $X_O = [x_1, x_2, ..., x_n]$ to obtain values (i.e. benchmark scores) $Y_O = [y_1, y_2,...,y_n]$ where $y_i = f(X_i)$. We could then update the model, conditional on these new observations, to obtain the posterior distribution:
 
 ```math
 f(X_I)|O \sim \mathcal{N}(μ_1 \, \Sigma_1) \\
@@ -47,6 +48,8 @@ f(X_I)|O \sim \mathcal{N}(μ_1 \, \Sigma_1) \\
 \Sigma_1(X_I) &= K(X_I,X_I) - K(X_I,X_O)^T K(X_O,X_O)^{-1}K(X_I,X_O)
 \end{aligned}
 ```
+
+This is the standard Bayesian update process used when using a GP model for Bayesian optimization.
 
 
 

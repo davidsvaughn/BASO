@@ -41,7 +41,7 @@ class MultiTaskSampler:
                  Y_obs,
                  Y_test=None,
                  min_iterations=50,
-                 max_iterations=2000,
+                 max_iterations=1000,
                  lr=0.1, # learning rate for MLE fit
                  patience=5,
                  loss_thresh=0.0001,
@@ -252,7 +252,7 @@ class MultiTaskSampler:
         
         #-----------------------------------
         # max-degree stopping criterion ( if there has been at least one previous failure )
-        if self.degree_thresh is not None and self.num_retries > self.max_retries//2:
+        if self.degree_thresh is not None and self.num_retries > self.max_retries//4:
         
             # function closure for max_degree metric
             def max_degree(**kwargs):
@@ -584,7 +584,9 @@ class MultiTaskSampler:
         plt.plot(self.X_feats, self.y_mean, 'b')
         legend.append('GP Posterior Mean')
         plt.fill_between(self.X_feats, self.y_mean - 2*self.y_sigma, self.y_mean + 2*self.y_sigma, alpha=0.5)
-        legend.append('2$\sigma$ Confidence')
+        legend.append('GP 2$\sigma$ Confidence')
+        plt.axvline(self.current_best_checkpoint, color='b', linestyle='--')
+        legend.append('GP Optimum')
         
         if y_ref is None and y_gold is not None:
             y_ref = y_gold
@@ -609,12 +611,12 @@ class MultiTaskSampler:
             plt.plot(self.X_feats, y_gold, gold_color)
             legend.append('True Mean')
             
-            # draw vertical dotted line at best input
-            plt.axvline(gold_best_input, color=gold_color, linestyle='--')
-            legend.append('True Optimum')
+            # # draw vertical dotted line at best input
+            # plt.axvline(gold_best_input, color=gold_color, linestyle='--')
+            # legend.append('True Optimum')
             
-        plt.axvline(self.current_best_checkpoint, color='b', linestyle='--')
-        legend.append('GP Optimum')
+        # plt.axvline(self.current_best_checkpoint, color='b', linestyle='--')
+        # legend.append('GP Optimum')
         
         plt.legend(legend, loc='best')
         
