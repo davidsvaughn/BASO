@@ -168,6 +168,7 @@ class StoppingCondition:
             param_group['lr'] *= self.lr_gamma
             lr = param_group['lr']
             
+            
         self.log(f"{self.prefix}*{self.lr_step}/{self.lr_steps}* Reduced learning rate to {lr:.4f}", 2)
         self._reset()
     
@@ -261,7 +262,8 @@ class StoppingConditions(StoppingCondition):
         if payload.lr_reduced:
             # reset all trackers
             for tracker in self.trackers:
-                tracker._reset(lr_step=payload.lr_step)
+                tracker._reset()
+                # tracker._reset(lr_step=payload.lr_step)
         
         # no stopping condition was met
         return False

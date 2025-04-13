@@ -110,7 +110,7 @@ def log(msg, verbosity_level=1):
     if verbosity >= verbosity_level:
         logging.getLogger(__name__).info(msg)
     
-log('-'*100)
+log('-'*110)
 log(f'Run directory: {run_dir}')
 log(f'Random seed: {rand_seed}')
 
@@ -142,7 +142,6 @@ log(f'FYI: ei_gamma: {ei_gamma:.4g}')
 #--------------------------------------------------------------------------
 # Train regression model on all data for gold standard
 Y_ref = None
-
 # Y_ref = Y_test.copy()
 
 if Y_ref is None:
@@ -150,8 +149,9 @@ if Y_ref is None:
                                Y_test=Y_test,
                                eta=None,
                                degree_thresh=None,
+                            #    patience=10,
                                min_iterations=100,
-                               loss_thresh=0.0005,
+                               loss_thresh=0.00025,
                                log_interval=25,
                                use_cuda=use_cuda,
                                run_dir=run_dir,

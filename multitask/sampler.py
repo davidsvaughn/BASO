@@ -155,7 +155,7 @@ class MultiTaskSampler:
                 return True
             else:
                 if i+1 < self.max_retries:
-                    self.log('-'*100)
+                    self.log('-'*110)
                     self.log(f'FAILED... ATTEMPT {i+2}')
         raise Exception('ERROR: Failed to fit model - max_retries reached')
     
@@ -179,7 +179,7 @@ class MultiTaskSampler:
         loss_thresh = self.loss_thresh
         
         #---------------------------------------------------------------------
-        # if fit is failing...
+        # if fit is failing... adjust parameters
         if self.num_retries > 0:
             
             # rank adjustment...
@@ -193,7 +193,7 @@ class MultiTaskSampler:
                 eta = eta * (self.eta_gamma ** max(0, self.num_retries - self.max_retries//2))
                 self.log(f'[ROUND-{self.round}]\tFYI: eta adjusted to {eta:.4g}', 2)
                 
-            # patience, min_iterations adjustment...
+            # patience, min_iterations, loss_thresh adjustment...
             patience = max(5, patience - self.num_retries//2)
             min_iterations = max(50, min_iterations - 10*self.num_retries//2)
             loss_thresh = self.loss_thresh * min(5, 1 + self.num_retries/2)
@@ -249,6 +249,22 @@ class MultiTaskSampler:
                 verbosity=self.verbosity,
             )
             cond_list.append(loss_condition)
+        
+        # used only for learning rate adjustment...
+        if self.num_retries > 0:
+            plateau_condition = StoppingCondition(
+                value="loss",
+                condition="x[-1] > x[-2]",
+                alpha=5,
+                min_iterations=min_iterations,
+                lr_steps=self.max_iterations, # set high so it doesn't trigger stopping
+                patience=1,
+                lr_gamma=0.95,
+                optimizer=optimizer,
+                verbosity=self.verbosity,
+                prefix='PLATEAU',
+            )
+            cond_list.append(plateau_condition)
         
         #-----------------------------------
         # max-degree stopping criterion ( if there has been at least one previous failure )
@@ -400,7 +416,7 @@ class MultiTaskSampler:
         current_y_val = Y_ref_mean[self.current_best_idx]
         self.current_err = err = abs(current_y_val - y_ref_max)/y_ref_max
         
-        self.log('-'*100)
+        self.log('-'*110)
         
         if Y_gold is not None:
             Gr2 = self.get_r2(Y_gold, plot=False)
@@ -408,7 +424,7 @@ class MultiTaskSampler:
         else:
             self.log(f'[ROUND-{self.round}]\tSTATS\t{self.round}\t{self.current_best_checkpoint}\t{Tr2:.4g}\t{err:.4g}\t{self.sample_fraction:.4g}')
         
-        self.log(f'[ROUND-{self.round}]\tCURRENT BEST:\tCHECKPOINT-{self.current_best_checkpoint}\tR$^2$={Tr2:.4f}\tY_PRED={current_y_val:.4f}\tY_ERR={100*err:.4g}%\t({100*self.sample_fraction:.2f}% sampled)')
+        self.log(f'[ROUND-{self.round}]\tCURRENT BEST:\tCHECKPOINT-{self.current_best_checkpoint}\tR^2={Tr2:.4f}\tY_PRED={current_y_val:.4f}\tY_ERR={100*err:.4g}%\t({100*self.sample_fraction:.2f}% sampled)')
         
     #-------------------------------------------------------------------------
     
@@ -439,7 +455,7 @@ class MultiTaskSampler:
         return K
     
     # compute expected improvement
-    def max_expected_improvement(self, beta=0.5, decay=1.0, debug=True):
+    def max_expected_improvement(self, beta=0.5, decay=1.0, debug=False):
         S_mu = self.y_means.sum(axis=-1)
         S_max_idx = np.argmax(S_mu)
         S_max = S_mu[S_max_idx]
@@ -528,7 +544,7 @@ class MultiTaskSampler:
         
         # report task with most samples
         self.report_most_sampled_task()
-        self.log('='*100)
+        self.log('='*110)
         
         # return next sample point
         return next_i, next_j
