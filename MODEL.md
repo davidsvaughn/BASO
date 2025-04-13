@@ -20,7 +20,7 @@ Gaussian Process regression models are a popular choice, since they provide expl
 Standard GP regression is well suited for modeling the learning curve of a single benchmark. What makes a Gaussian Process different from a standard multivariate Gaussian probability distribution is that, in a GP model, the input space (in this case the space of model benchmarks) is the source of the "multiple dimensions" even though it lies along 1 dimension. Suppose we only save model benchmarks every 50 steps, up to 1000, so we can only make observations $f(x)$ when $x$ is drawn from $[0, 50, 100, 150, ..., 1000]$.  We can still use a GP regression model to define a continuous function over the entire interval $[0..1000]$. To make things simpler, let's instead define a discrete input domain $X_I$ as the vector of positive integers 1 to 1000: $X_I = [1,2,3,...,1000]$.  We can imagine modeling the vector of function values at each of these points $f(X_I) = [f(x_1),…,f(x_n)]$ as a multivariate Gaussian. Before making any observations, our *GP Prior* over this domain is defined as a multivariate normal distribution:
 
 ```math
-f(X_I) \sim \mathcal{N}(\mu_0 \, \Sigma_0) \\
+f(X_I) \sim \mathcal{N}(\mu_0 , \Sigma_0) \\
 {    s.t.   } \\
 \begin{aligned} \\
 \mu_0(X_I) &= 0 \\
@@ -28,20 +28,19 @@ f(X_I) \sim \mathcal{N}(\mu_0 \, \Sigma_0) \\
 \end{aligned}
 ```
 
-where $K$ is a pair-wise kernel function $k(x,x{\prime})$ used to express the correlation between function values $f(x)$ and $f(x{\prime})$. Since the input domain (of model benchmarks) is numeric (as opposed to categorical) we would use an RBF kernel, which represents similarities between input pairs $x,x{\prime}$ as a function of the squared distance between them $\lVert x_a - x_b \rVert^2$, encoding the intuition that model checkpoints that are closer together are expected to have more similar function values (i.e. benchmark scores) than two checkpoints that are farther apart. The RBF (Radial Basis Function) kernel is expressed as: 
+where $K$ is a pair-wise kernel function $K(x_a,x_b)$ used to express the correlation between function values $f(x_a)$ and $f(x_b)$. Since the input domain (of model benchmarks) is numeric (as opposed to categorical) we would use an RBF kernel, which represents similarities between input pairs $x_a,x_b$ as a function of the squared distance between them $\lVert x_a - x_b \rVert^2$, encoding the intuition that model checkpoints that are closer together are expected to have more similar function values (i.e. benchmark scores) than two checkpoints that are farther apart. The RBF (Radial Basis Function) kernel is expressed as: 
 
 $$
-K_{RBF}(x,x{\prime}) = σ^2 \exp{ \frac{ -|x-x{\prime}|^2}{2l^2} } \\
-K_{RBF}(x_a, x_b) = \\exp{ \\left( -\\frac{1}{2\\sigma^2} \\lVert x_a - x_b \\rVert^2 \\right)}
+K_{RBF}(x_a, x_b) = \gamma^2 \exp{ \left( -\frac{1}{2\sigma^2} \lVert x_a - x_b \rVert^2 \right)}
 $$
 
-where hyperparameters $l$ and $σ²$ represent input-scale and output-scale, respectively.
+where learnable hyperparameters $\gamma$ and $\sigma$ represent the input-scale and output-scale, respectively.
 
 
 Now suppose we acquire a set of observations $O = {X_O,Y_O}$ by evaluating the function at a set of points (i.e. model checkpoints) $X_O = [x_1, x_2, ..., x_n]$ to obtain values (i.e. benchmark scores) $Y_O = [y_1, y_2,...,y_n]$ where $y_i = f(X_i)$. We could then update the model, conditional on these new observations, to obtain the posterior distribution:
 
 ```math
-f(X_I)|O \sim \mathcal{N}(μ_1 \, \Sigma_1) \\
+f(X_I)|O \sim \mathcal{N}(μ_1 , \Sigma_1) \\
 {    s.t.   } \\
 \begin{aligned} \\
 μ_1(X_I) &= K(X_I,X_O)^T   K(X_O,X_O)^{-1}Y_O \\
