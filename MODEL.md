@@ -21,11 +21,7 @@ Standard GP regression would be suitable only for modeling the learning curve fo
 
 $$
 f(X_I) \sim \mathcal{N}(\mu_0 \, \Sigma_0)
-$$
-
-where:
-
-$$
+\text{ s.t. }
 \begin{aligned}
 \mu_0(X_I) &= 0 \\
 \Sigma_0(X_I) &= K(X_I,X_I)
@@ -43,13 +39,9 @@ with hyperparameters $l$ and $σ²$ representing input-scale and output-scale.
 
 Now suppose we acquire a set of observations $O = {X_O,Y_O}$ by evaluating the function at a set of points $X_O = [x_1, x_2, ..., x_n]$ to obtain scores $Y_O = [y_1, y_2,...,y_n] $ where $y_i = f(X_i)$. We would update the model (conditional on the new observations) to obtain the posterior distribution 
 
-$$
-f(X_I)|O \sim \mathcal{N}(μ_1 \, \Sigma_1)
-$$
-
-where:
-
 ```math
+f(X_I)|O \sim \mathcal{N}(μ_1 \, \Sigma_1)
+\text{ s.t. }
 \begin{aligned}
 μ_1(X_I) &= K(X_I,X_O)^T   K(X_O,X_O)^{-1}Y_O \\
 \Sigma_1(X_I) &= K(X_I,X_I) - K(X_I,X_O)^T K(X_O,X_O)^{-1}K(X_I,X_O)
