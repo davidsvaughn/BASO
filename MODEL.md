@@ -33,7 +33,12 @@ Now suppose we observations $O = {X_O,Y_O}$ by evaluating the function at a set 
 
 We would update the model (conditional on the new observations) to obtain the posterior distribution $f(X_I)|O \sim \mathcal{N}(μ_1 \, \Sigma_1)$ where:
 
-<iframe src="https://math.embed.fun/embed/gzhyaE7K1qM2GbbeG57U7m" frameborder="0" width="512" height="172"></iframe>
+```math
+\begin{aligned}
+μ_1(X_I) &= K(X_I,X_O)^T   K(X_O,X_O)^{-1}Y_O \\
+\Sigma_1(X_I) &= K(X_I,X_I) - K(X_I,X_O)^T K(X_O,X_O)^{-1}K(X_I,X_O)
+\end{aligned}
+```
 
 
 
