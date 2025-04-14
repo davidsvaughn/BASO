@@ -116,7 +116,11 @@ $$
 
 If $f(x_i) < y^*$ there is no improvement, so we use $0$ instead. If we let $v = \frac{y^*-\mu_i}{\sigma_i}$, then the right side contains an expression of the form: $\mathbb{E}_{u \sim  \mathcal{N}(0,1)} [\max(0,u-v)]$, which can be solved analytically:
 $$
-\mathbb{E}_u [\max(0,u - v)] = \int_{v}^{\infty} (u - v) \cdot \phi(u) \, du = [\phi(u) - v \cdot (1-\Phi(u))]_{v}^{\infty} = \phi(v) - v (1 -\Phi(v))
+\begin{aligned} 
+\mathbb{E}_u [\max(0,u - v)]  = & \ \int_{v}^{\infty} (u - v) \cdot \phi(u) \, du \\
+= & \ \ [\phi(u) - v \cdot (1-\Phi(u))]_{v}^{\infty} \\
+= & \ \ \phi(v) - v (1 -\Phi(v))
+\end{aligned} 
 $$
 
 where $\phi$ and $\Phi$ are the standard Gaussian PDF and CDF, respectively. We can further simplify using $v = \frac{y^*-\mu_i}{\sigma_i}$ plus the identities:
@@ -132,32 +136,37 @@ $$
 The $x_i$ with the greatest $EI(x_i)$ value would be chosen for the next function evaluation.
 
 #### Modification to EI
-As mentioned before, we are interested in using BO to maximize the sum over all benchmark tasks $\sum_{j=1}^M \mu_{i,j}|O$  , which is equivalent to maximizing the average. We would like to used an acqusition function like EI, but in is standard form it does not quite work for this  modified objective function. At each iteration, we would like to evaluate each possible checkpoint-task pair $\langle x_i,t_j \rangle$ *not* based on the expected improvement over the best individual benchmark score observed so far, $y^*_{x,t}$, but instead by the expected improvement in the sum of scores over all tasks for a given checkpoint that might result.
+As mentioned before, we are interested in using BO (Bayesian Optimization) to find the model checkpoint that acheives the highest sum of scores over all benchmark tasks $\sum_{j=1}^M \mu_{i,j}|O$  , which is equivalent to maximizing the average score. We would like to used an acquisition function like EI, but in its standard form it does not quite work for this  modified objective function. At each iteration, we would like to evaluate each possible checkpoint-task pair $\langle x_i,t_j \rangle$ *not* based on the expected improvement over the best individual benchmark score observed so far, $y^*_{x,t}$, but instead by the expected improvement in the sum of scores over all tasks for the given checkpoint.
 
-One problem with this is that we have no direct observations of this sum (of scores over all tasks for a checkpoint). All we have are observations of individual scores resulting from arbitrary checkpoint-task combinations. However, as a proxy we can simply, for each candidate checkpoint $x_i$, sum over all current posterior mean estimates (i.e. over all tasks):
+One problem with this is that we have no direct observations of this sum (of scores over all tasks for a checkpoint). All we have are observations of individual scores resulting from arbitrary checkpoint-task combinations. However, as a proxy we can simply, for each candidate checkpoint $x_i$, sum over all current posterior mean score estimates (i.e. over all tasks):
 
-$S_i = \sum_{j=1}^M \mu_{i,j}|O$
-
-as well as use the maximum value $S^*$ as a suitable proxy for a hypothetical best sum so far observed.  Now for the purposes of our acquisition function, we would like to be able to evaluate $S_i$ as a function of a single candidate pair $\langle x_i,t_j \rangle$ under evaluation, keeping all else constant.  We can acheive this by decomposing the sum as:
 $$
-S_i = f(x_i,t_j) + \sum_{k \neq j}^{M} \mu_{i,k}
+S_i = \sum_{j=1}^M \mu_{i,j}|O
 $$
-which allows us to write a modified Expected Improvement function as:
+
+as well as use the maximum value $S^*$ as a proxy for a hypothetical *highest sum so far observed*.  Now for the purposes of our acquisition function, we would like to be able to treat $S_i$ as a function of the single candidate pair $\langle x_i,t_j \rangle$ under evaluation, keeping all else constant.  We can acheive this by decomposing the sum as:
+$$
+S_i = f(x_i,t_j) + \sum_{k \neq j} \mu_{i,k}
+$$
+which allows us to write a modified Expected Improvement function:
 
 $$
 \begin{aligned} 
-\mathbb{E}_{f \sim \mathcal{N}(\mu_{i,j}, \sigma^2_{i,j})} [\max(0,S_i - S^*)] 
-&= \mathbb{E}_{f \sim \mathcal{N}(\mu_{i,j}, \sigma^2_{i,j})} [\max(0,f(x_i,t_j)- (S^* -\sum_{k \neq j}^{M} \mu_{i,k} ))]  \\
-& = \mathbb{E}_f  \left[ \max \left(0, \frac{f(x_i,t_j) - \mu_{i,j}}{\sigma_{i,j}} - \frac{(S^* -\sum_{k \neq j}^{M} \mu_{i,k})-\mu_{i,j}}{\sigma_{i,j}}\right) \right] \sigma_{i,j}
+& \ \ \mathbb{E}_{f \sim \mathcal{N}(\mu_{i,j}, \sigma^2_{i,j})} [\max(0,S_i - S^*)]  \\
+ = & \ \ \mathbb{E}_{f \sim \mathcal{N}(\mu_{i,j}, \sigma^2_{i,j})} [\max(0,f(x_i,t_j)- (S^* -\sum_{k \neq j}^{M} \mu_{i,k} ))]  \\
+ =  & \ \ \mathbb{E}_f  \left[ \max \left(0, \frac{f(x_i,t_j) - \mu_{i,j}}{\sigma_{i,j}} - \frac{(S^* -\sum_{k \neq j}^{M} \mu_{i,k})-\mu_{i,j}}{\sigma_{i,j}}\right) \right] \sigma_{i,j}
 \end{aligned} 
 $$
 
-The purpose of the decomposition is that we once again have an expression of the form: $\mathbb{E}_{u \sim  \mathcal{N}(0,1)} [\max(0,u-v)]$, which means we can use the same closed form expression derived earlier for EI, except we replace $y^*$ with $S^* -\sum_{k \neq j}^{M} \mu_{i,k}$:
+The purpose of the $S_i$ decomposition is that we once again have an expression of the form: $\mathbb{E}_{u \sim  \mathcal{N}(0,1)} [\max(0,u-v)]$, which means we can use the same closed form expression derived earlier for EI, except we replace $y^*$ with $S^* -\sum_{k \neq j}^{M} \mu_{i,k}$:
 
 $$
 \begin{aligned} 
 EI(x_i,t_j) &= (\mu_{i,j}-S^* +\sum_{k \neq j}^{M} \mu_{i,k})\Phi \left( \frac{\mu_{i,j} - S^* +\sum_{k \neq j}^{M} \mu_{i,k}}{\sigma_{i,j}} \right) + \sigma_{i,j} \phi \left( \frac{\mu_{i,j} - S^* +\sum_{k \neq j}^{M} \mu_{i,k}}{\sigma_{i,j}} \right) \\
-&= (S_i - S^*)\Phi \left( \frac{S_i - S^*}{\sigma_{i,j}} \right) + \sigma_{i,j} \phi \left( \frac{S_i - S^*}{\sigma_{i,j}} \right)
+& \\
+&= \boxed{ (S_i - S^*)\Phi \left( \frac{S_i - S^*}{\sigma_{i,j}} \right) + \sigma_{i,j} \phi \left( \frac{S_i - S^*}{\sigma_{i,j}} \right) }
 \end{aligned} 
 $$
+
+which we can maximize in order to choose the next checkpoint-task pair $\langle x_i,t_j \rangle$ to evaluate.
 
