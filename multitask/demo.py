@@ -36,7 +36,7 @@ task_sample = 1.0
 # multi-task lkj prior
 eta = 0.25
 eta_gamma = 0.99
-rank_fraction = 0.5 # 0.25
+rank_fraction = 0.5 # 0.25  0.5
 
 # Expected Improvement parameters...
 ei_beta = 0.5
@@ -151,7 +151,7 @@ if Y_ref is None:
                                degree_thresh=None,
                                min_iterations=200,
                                max_iterations=2000,
-                               loss_thresh=0.00025,
+                               loss_thresh=0.0005,
                                log_interval=25,
                                use_cuda=use_cuda,
                                run_dir=run_dir,
@@ -202,6 +202,8 @@ for _ in range(10): # try 10 times to complete the run without error
                                    use_cuda=use_cuda,
                                    run_dir=run_dir,
                                    max_retries=20,
+                                   degree_thresh=4,
+                                   degree_stat='max',
                                    )
 
         # Fit model to initial samples

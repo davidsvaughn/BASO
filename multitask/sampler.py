@@ -46,6 +46,7 @@ class MultiTaskSampler:
                  patience=5,
                  loss_thresh=0.0001,
                  degree_thresh=3,
+                 degree_stat='max', # 'max' or 'avg'
                  max_sample_fraction=0.25, 
                  rank_fraction=0.5,
                  eta=0.25,
@@ -83,6 +84,7 @@ class MultiTaskSampler:
         self.patience = patience
         self.loss_thresh = loss_thresh
         self.degree_thresh = degree_thresh
+        self.degree_stat = degree_stat
         self.max_sample_fraction = max_sample_fraction
         self.rank_fraction = rank_fraction
         self.eta = eta
@@ -251,7 +253,7 @@ class MultiTaskSampler:
             cond_list.append(loss_condition)
         
         # used only for learning rate adjustment...
-        if self.num_retries > 0:
+        if self.num_retries > -1:
             plateau_condition = StoppingCondition(
                 value="loss",
                 condition="x[-1] > x[-2]",
@@ -268,14 +270,14 @@ class MultiTaskSampler:
         
         #-----------------------------------
         # max-degree stopping criterion ( if there has been at least one previous failure )
-        if self.degree_thresh is not None and self.num_retries > self.max_retries//4:
+        if self.degree_thresh is not None:# and self.num_retries > self.max_retries//4:
         
-            # function closure for max_degree metric
-            def max_degree(**kwargs):
-                return degree_metric(model=self.model, X_inputs=self.X_inputs, m=self.m, num_trials=100)['max']
+            # function closure for degree metric
+            def degree_func(**kwargs):
+                return degree_metric(model=self.model, X_inputs=self.X_inputs, m=self.m, num_trials=100)[self.degree_stat]
             
             degree_condition = StoppingCondition(
-                value=max_degree,
+                value=degree_func,
                 condition="x[-1] > t",
                 t=self.degree_thresh,
                 interval=5, # check every 5 iterations
