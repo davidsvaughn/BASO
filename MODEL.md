@@ -16,24 +16,14 @@ Noisy observations... in addition to interpolating between observations to imput
 
 Bayesian Optimization is a common approach for such optimization scenarios, when the function we are trying to optimize is expensive to compute. Sometimes it's called "black-box" optimization since we treat the function $f$ as a "black-box" and only have access to it by querying it's value at specific points. The basic approach is to repeatedly query (i.e. evaluate) the function so as to acquire more sample points with which to estimate a regression model, and then use that regression model to optimize the function. Naturally this process is a loop, the main steps being:
 
-  
-
 1. use the current regression model to decide which point $x_i$ to query next
 2. update the regression model using newly observed function value $y_i=f(x_i)$
-
-  
 
 It's important to remember that the end goal is to optimize $f(x)$ (i.e. find $\argmax{x}{f(x)}$), not really to fit a full regression model to $f(x)$. Of course, if we had a really good regression model, we could exploit it to easily find the max. Since we don't, we are naturally more concerned with increasing the quality of the regression model in the region(s) where $f$ is high, since those are more likely to contain $f_{max}$. So, there is an inherent trade-off at play during Bayesian optimization between (a) optimizing the accuracy of the regression model and (b) optimizing the function we are modeling.
 
 Sometimes this is called the *exploration-vs-exploitation* trade-off. Since step 2 above is fairly straightforward, this trade-off comes into play only in step 1, where we must decide how to choose the next query point. At any point during the BO loop, we can either (a) poke around in (i.e. exploit) regions where our current regression model has greater certainty that $f$ is high, or (b) explore regions where the current regression model has less certainty about whether $f$ is high or low. Clearly it would be useful to have a regression model that can provide uncertainty estimates.
 
-  
-  
-
 *Gaussian Process* regression models are a popular choice, since they provide explicit uncertainty estimates that can be used to guide step 1. Another reason they are convenient for Bayesian Optimization is that the priors, marginals, and posterior (conditional) means and variances are all expressible in closed form as multivariate Gaussian (normal) distributions, which makes it easy to repeatedly perform Bayesian updates to our model as we observe more data points.
-
-  
-  
 
 Standard GP regression is well suited for modeling the learning curve of a single benchmark. What makes a Gaussian Process different from a standard multivariate Gaussian probability distribution is that, in a GP model, the input space (in this case the space of model benchmarks) is the source of the "multiple dimensions" even though it lies along 1 dimension. Suppose we only save model benchmarks every 50 steps, up to 1000, so we can only make observations $f(x)$ when $x$ is drawn from $[0, 50, 100, 150,…, 1000]$. We can still use a GP regression model to define a continuous function over the entire interval $[0…1000]$. To make things simpler, let's instead define our GP regression function over a discrete input domain $X$ of the integers 1 to N: $X = [1,2,3,…,N]$. We can imagine modeling the vector of function values at each of these input points $f_X = [f(x_1),…,f(x_N)]$ as a multivariate Gaussian. Before making any observations, our *GP Prior* over this domain is defined as a multivariate normal distribution:
 
@@ -99,7 +89,7 @@ The $K_x$ kernel accounts for correlations between two outputs $f(x,t)$ and $f(x
 
 Now we can picture our input domain as a 2D matrix (grid) with model checkpoints $X = [1,2,3,…,N]$ along the horizontal dimension, and the space of all benchmark tasks $T= [1,2,3,…,M]$ along the vertical dimension. As a notational convenience we sometimes *vectorize* (i.e. flatten) this $N$x$M$ matrix into a one dimensional *all-pairs* vector $V_{X,T} = X \otimes  T$ of length $MN$, but it represents the exact same quantity.
 
-Now we have a posterior mean $\mu_{i,j}$ and covariance $\Sigma_{i,j}$ defined for every checkpoint model $x_i$ and  benchmark task $t_j$ combination: $\langle x_i,t_j \rangle$. In a standard Bayesian Optimization setup using a multi-task GP, the objective would be to find the optimal checkpoint-task pair. In other words, we'd want to find the $\langle i^*,j^* \rangle$ (i.e. checkpoint model $x_i^*$ and benchmark task $t_j^*$)  where the posterior mean $\mu_{i,j}|O$ is maximized.
+Now we have a posterior mean $\mu_{i,j}$ and standard deviation $\sigma_{i,j}$ defined for every checkpoint model $x_i$ and  benchmark task $t_j$ combination: $\langle x_i,t_j \rangle$. In a standard Bayesian Optimization setup using a multi-task GP, the objective would be to find the optimal checkpoint-task pair. In other words, we'd want to find the $\langle i^*,j^* \rangle$ (i.e. checkpoint model $x_i^*$ and benchmark task $t_j^*$)  where the posterior mean $\mu_{i,j}|O$ is maximized.
 
 But we are interested in summing (averaging) over the task dimension and finding the optimal checkpoint. So we want to find the $i^*$ (model checkpoint $x_i^*$) where the average over tasks $ \frac{\sum_{j=1}^M \mu_{i,j}|O}{M}$ is maximized. We maximize the sum $\sum_{j=1}^M \mu_{i,j}|O$ instead since max is invariant to division by a constant.
 
@@ -107,7 +97,7 @@ The one question remaining is how to perform step 1 -- how do we use the current
 
 ### Expected Improvement
 
-How EI  usually works is that, as we acquire new observations $y_o=f(x_o)$, we continually keep track of the maximum score $y^*$ observed so far.  After every model update step (step 2), we must consider all input points $x_i$ not yet observed as candidates to query for the next observation. At each of these points, the current GP posterior yields a marginal posterior mean $μ_i$ and variance $\sigma^2_i$
+How EI  usually works is that, as we acquire new observations $y_o=f(x_o)$, we continually keep track of the maximum score $y^*$ observed so far.  After every model update step (step 2), we must consider all input points $x_i$ not yet observed as candidates to query for the next observation. At each of these points, the current GP posterior yields a marginal posterior mean $μ_i$ and standard deviation $\sigma_i$.
 
 These parameters define a probability distribution over all possible values $f(x_i)$ the objective function might assume at $x_i$. Using these marginal distributions, we can compute, for each candidate input $x_i$, the *expected value* of the amount that $f(x_i)$ will improve over the current $y^*$:
 
@@ -116,7 +106,7 @@ $$
 =  \mathbb{E}_f \left[ \max \left(0, \frac{f(x_i) - \mu_i}{\sigma_i} - \frac{y^*-\mu_i}{\sigma_i}\right) \right] \sigma_i
 $$
 
-If $f(x_i) < y^*$ there is no improvement, so we use $0$ instead. If we let $v = \frac{y^*-\mu_i}{\sigma_i}$, then the right side contains an expression of the form: $\mathbb{E}_{u \sim  \mathcal{N}(0,1)} [\max(0,u-v)]$, which can be solved analytically:
+If $f(x_i) < y^*$ there is no improvement, so we use $0$ instead. Now, if we let $v = \frac{y^*-\mu_i}{\sigma_i}$, then the right side contains an expression of the form: $\mathbb{E}_{u \sim  \mathcal{N}(0,1)} [\max(0,u-v)]$, which can be solved analytically:
 $$
 \begin{aligned} 
 \mathbb{E}_u [\max(0,u - v)]  = & \ \int_{v}^{\infty} (u - v) \cdot \phi(u) \, du \\

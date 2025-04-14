@@ -20,7 +20,7 @@ rank_fraction = -1
 # SET PARAMETERS
 
 fn = 'phi4-math-4claude.txt'
-# fn = 'phi4-bw-4claude.txt'
+fn = 'phi4-bw-4claude.txt'
 
 # rand_seed = 2951
 
@@ -94,6 +94,11 @@ src = os.path.join(current_dir, os.path.basename(__file__))
 dst = os.path.join(run_dir, os.path.basename(__file__))
 os.system(f'cp {src} {dst}')
 
+# copy sampler.py to run directory
+src = os.path.join(current_dir, 'sampler.py')
+dst = os.path.join(run_dir, 'sampler.py')
+os.system(f'cp {src} {dst}')
+
 #-----------------------------------------------------------------------
 # setup logging
 log_file = os.path.join(run_dir, f'run_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log')
@@ -142,16 +147,16 @@ log(f'FYI: ei_gamma: {ei_gamma:.4g}')
 #--------------------------------------------------------------------------
 # Train regression model on all data for gold standard
 Y_ref = None
-# Y_ref = Y_test.copy()
+Y_ref = Y_test.copy()
 
 if Y_ref is None:
     sampler = MultiTaskSampler(X_feats, Y_test, 
                                Y_test=Y_test,
                                eta=None,
-                               degree_thresh=None,
-                               min_iterations=200,
+                               degree_thresh=6,
+                               min_iterations=100,
                                max_iterations=2000,
-                               loss_thresh=0.0005,
+                               loss_thresh=0.00025,
                                log_interval=25,
                                use_cuda=use_cuda,
                                run_dir=run_dir,
@@ -202,8 +207,6 @@ for _ in range(10): # try 10 times to complete the run without error
                                    use_cuda=use_cuda,
                                    run_dir=run_dir,
                                    max_retries=20,
-                                   degree_thresh=4,
-                                   degree_stat='max',
                                    )
 
         # Fit model to initial samples

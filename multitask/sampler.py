@@ -45,7 +45,7 @@ class MultiTaskSampler:
                  lr=0.1, # learning rate for MLE fit
                  patience=5,
                  loss_thresh=0.0001,
-                 degree_thresh=3,
+                 degree_thresh=4,
                  degree_stat='max', # 'max' or 'avg'
                  max_sample_fraction=0.25, 
                  rank_fraction=0.5,
@@ -457,7 +457,7 @@ class MultiTaskSampler:
         return K
     
     # compute expected improvement
-    def max_expected_improvement(self, beta=0.5, decay=1.0, debug=False):
+    def max_expected_improvement(self, beta=0.5, decay=1.0, debug=True):
         S_mu = self.y_means.sum(axis=-1)
         S_max_idx = np.argmax(S_mu)
         S_max = S_mu[S_max_idx]
@@ -477,13 +477,20 @@ class MultiTaskSampler:
         sig = self.y_sigmas[valid_i, valid_j]
 
         # Get row sums for each valid i
-        row_sums = np.sum(self.y_means[valid_i, :], axis=1)
-        sx = row_sums - mu
-
-        # improvement vector, z-scores
-        s_max = S_max - sx
-        imp = mu - s_max - beta
+        Sx = np.sum(self.y_means[valid_i, :], axis=1)
+        
+        #---------------------------------------
+        # NEW
+        imp = Sx - S_max - beta
         z = imp/sig
+
+        #---------------------------------------
+        # #OLD  improvement vector, z-scores
+        # sx = Sx - mu
+        # s_max = S_max - sx
+        # imp = mu - s_max - beta
+        # z = imp/sig
+        #---------------------------------------
 
         # if use_logei: # logEI computation (for stability)
         logh = log_h(torch.tensor(z, dtype=torch.float64)).numpy()
@@ -524,6 +531,76 @@ class MultiTaskSampler:
         
         return next_i, next_j
     
+    #-------------------------------------------------------------------------
+    
+    # compute expected improvement
+    def max_expected_improvement_OLD(self, beta=0.5, decay=1.0, debug=True):
+        S_mu = self.y_means.sum(axis=-1)
+        S_max_idx = np.argmax(S_mu)
+        S_max = S_mu[S_max_idx]
+        
+        # get unsampled indices
+        i_indices, j_indices = np.where(np.ones_like(self.S))
+        mask = (~self.S).reshape(-1)
+        
+        # Vectorized computation of all EI components
+        valid_i, valid_j = i_indices[mask], j_indices[mask]
+            
+        # Initialize EI matrix with -inf for invalid entries
+        EI = np.full(len(mask), -math.inf)
+
+        # Vectorized computation of all EI components
+        mu = self.y_means[valid_i, valid_j]
+        sig = self.y_sigmas[valid_i, valid_j]
+
+        # Get row sums for each valid i
+        row_sums = np.sum(self.y_means[valid_i, :], axis=1)
+        sx = row_sums - mu
+
+        # improvement vector, z-scores
+        s_max = S_max - sx
+        imp = mu - s_max - beta
+        z = imp/sig
+
+        # if use_logei: # logEI computation (for stability)
+        logh = log_h(torch.tensor(z, dtype=torch.float64)).numpy()
+        ei_values = np.log(sig) + logh
+        # else: # standard EI
+        #     ei_values = imp * norm.cdf(z) + sig * norm.pdf(z)
+        #     ei_values = np.log(ei_values)
+        
+        # if debug:
+        #     # retain original EI matrix for
+        #     # comparison to dampened EI matrix
+        #     EI0 = EI.copy()
+        #     EI0[mask] = ei_values
+            
+        # dampen highly sampled regions
+        D = self.sample_damper(decay=decay)
+        d = D[valid_i, valid_j]
+        ei_min = ei_values.min()
+        # shift (so non-negative) -> apply dampening -> unshift
+        ei_values = (ei_values-ei_min) * (1 - decay * d**0.5) + ei_min
+
+        # Assign computed values to valid sampling positions and return optimum
+        EI[mask] = ei_values
+        k = np.argmax(EI)
+        next_i, next_j = i_indices[k], j_indices[k]
+        
+        #-----------------------------------------------------------
+        # # debug
+        # if debug:
+        #     self.plot_task(next_j, '- NO DAMPER', EI0.reshape(self.n, self.m)[:, next_j])
+        # self.plot_task(next_j, '- BEFORE', EI.reshape(self.n, self.m)[:, next_j])
+        # #------------------------------------------------------------
+        
+        # # decay EI parameters
+        # self.ei_decay = self.ei_decay * self.ei_gamma
+        # self.ei_beta = self.ei_beta * self.ei_gamma
+        # self.log(f'[ROUND-{self.round}]\tFYI: EI beta: {self.ei_beta:.4g}', 2)
+        
+        return next_i, next_j
+    
     #----------------------------------------------------------------------
     
     # report task with most samples
@@ -536,9 +613,16 @@ class MultiTaskSampler:
     # choose next sample
     def get_next_sample_point(self):
         
+        # debugging
+        # old_i, old_j = self.max_expected_improvement_OLD(beta=self.ei_beta, decay=self.ei_decay)
+        
         # Maximize Expected Improvement acquisition function
         next_i, next_j = self.max_expected_improvement(beta=self.ei_beta, decay=self.ei_decay)
         self.next_i, self.next_j = next_i, next_j
+        
+        # compare old i,j to next i,j
+        # if old_i != next_i or old_j != next_j:
+        #     self.log(f'[ROUND-{self.round}]\tFYI: OLD: {old_i},{old_j} NEW: {next_i},{next_j}', 1)
         
         # convert to original X feature space
         next_checkpoint = self.X_feats[next_i]
