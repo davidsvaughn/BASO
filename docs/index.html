@@ -214,12 +214,10 @@
   
   <p>The purpose of the \(S_i\) decomposition is that we once again have an expression of the form: \(\mathbb{E}_{u \sim \mathcal{N}(0,1)} [\max(0,u-v)]\), which means we can use the same closed form expression derived earlier for EI, except we replace \(y^*\) with \(S^* -\sum_{k \neq j}^{M} \mu_{i,k}\):</p>
   
-  \[
-  \begin{aligned} 
-  EI(x_i,t_j) &= (\mu_{i,j}-S^* +\sum_{k \neq j}^{M} \mu_{i,k})\Phi \left( \frac{\mu_{i,j} - S^* +\sum_{k \neq j}^{M} \mu_{i,k}}{\sigma_{i,j}} \right) + \sigma_{i,j} \phi \left( \frac{\mu_{i,j} - S^* +\sum_{k \neq j}^{M} \mu_{i,k}}{\sigma_{i,j}} \right) \\
-  & \\
-  &= \boxed{ (S_i - S^*)\Phi \left( \frac{S_i - S^*}{\sigma_{i,j}} \right) + \sigma_{i,j} \phi \left( \frac{S_i - S^*}{\sigma_{i,j}} \right) }
-  \end{aligned} 
+  \[ 
+  EI(x_i,t_j) = (\mu_{i,j}-S^* +\sum_{k \neq j}^{M} \mu_{i,k})\Phi \left( \frac{\mu_{i,j} - S^* +\sum_{k \neq j}^{M} \mu_{i,k}}{\sigma_{i,j}} \right) + \sigma_{i,j} \phi \left( \frac{\mu_{i,j} - S^* +\sum_{k \neq j}^{M} \mu_{i,k}}{\sigma_{i,j}} \right) \\
+  \\
+  \boxed{ EI(x_i,t_j) = (S_i - S^*)\Phi \left( \frac{S_i - S^*}{\sigma_{i,j}} \right) + \sigma_{i,j} \phi \left( \frac{S_i - S^*}{\sigma_{i,j}} \right) }
   \]
   
   <p>which we can maximize in order to choose the next checkpoint-task pair \(\langle x_i,t_j \rangle\) to evaluate.</p>
