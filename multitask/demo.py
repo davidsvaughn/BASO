@@ -20,7 +20,7 @@ rank_fraction = -1
 # SET PARAMETERS
 
 fn = 'phi4-math-4claude.txt'
-fn = 'phi4-bw-4claude.txt'
+# fn = 'phi4-bw-4claude.txt'
 
 # rand_seed = 2951
 
@@ -28,6 +28,11 @@ fn = 'phi4-bw-4claude.txt'
 # if <1, then fraction of total obs
 n_obs    = 2
 # n_obs    = 0.1
+
+# stop BO after this fraction of all points are sampled
+# if <1, then fraction of total obs
+# if >1, then number of obs
+max_sample = 600
 
 # select random subset of tasks
 task_sample = 1.0
@@ -48,7 +53,6 @@ ei_f, ei_t = 0.2, 0.05
 log_interval = 25
 verbosity = 1
 use_cuda = True
-max_sample_fraction = 0.1 # stop BO after this fraction of all points are sampled
 
 # synthetic data...
 # synthetic = False
@@ -140,6 +144,9 @@ if task_sample>0 and task_sample!=1:
     Y_test = Y_test[:, idx]
     n,m = Y_test.shape
     
+if max_sample > 1:
+    max_sample = max_sample / (n*m)
+    
 # compute ei_gamma
 ei_gamma = np.exp(np.log(ei_f) / (ei_t*n*m - 2*m))
 log(f'FYI: ei_gamma: {ei_gamma:.4g}')
@@ -147,7 +154,7 @@ log(f'FYI: ei_gamma: {ei_gamma:.4g}')
 #--------------------------------------------------------------------------
 # Train regression model on all data for gold standard
 Y_ref = None
-Y_ref = Y_test.copy()
+# Y_ref = Y_test.copy()
 
 if Y_ref is None:
     sampler = MultiTaskSampler(X_feats, Y_test, 
@@ -201,7 +208,7 @@ for _ in range(10): # try 10 times to complete the run without error
                                    eta_gamma=eta_gamma,
                                    ei_beta=ei_beta,
                                    ei_gamma=ei_gamma,
-                                   max_sample_fraction=max_sample_fraction, 
+                                   max_sample=max_sample, 
                                    rank_fraction=rank_fraction,
                                    log_interval=log_interval,
                                    use_cuda=use_cuda,
@@ -216,7 +223,7 @@ for _ in range(10): # try 10 times to complete the run without error
         # sampler.plot_all(max_fig=10)
 
         # Run Bayesian optimization loop
-        while sampler.sample_fraction < max_sample_fraction:
+        while sampler.sample_fraction < max_sample:
             _, next_task = sampler.add_next_sample()
             sampler.update()
             sampler.compare(Y_ref, Y_test)

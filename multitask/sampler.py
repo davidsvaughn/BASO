@@ -40,14 +40,14 @@ class MultiTaskSampler:
                  X_feats,
                  Y_obs,
                  Y_test=None,
-                 min_iterations=50,
+                 min_iterations=100,
                  max_iterations=1000,
                  lr=0.1, # learning rate for MLE fit
                  patience=5,
                  loss_thresh=0.0001,
                  degree_thresh=4,
                  degree_stat='max', # 'max' or 'avg'
-                 max_sample_fraction=0.25, 
+                 max_sample=0.25, 
                  rank_fraction=0.5,
                  eta=0.25,
                  eta_gamma=0.9,
@@ -85,7 +85,7 @@ class MultiTaskSampler:
         self.loss_thresh = loss_thresh
         self.degree_thresh = degree_thresh
         self.degree_stat = degree_stat
-        self.max_sample_fraction = max_sample_fraction
+        self.max_sample = max_sample
         self.rank_fraction = rank_fraction
         self.eta = eta
         self.eta_gamma = eta_gamma
