@@ -1,5 +1,7 @@
 ## Model
 
+[https://www.xyzeditor.com/]
+
 ### Bayesian Optimization using Multi-task Gaussian Process Regression
 
 We have a set of model checkpoints saved periodically during training (usually saved at equally spaced intervals but this is not a requirement). In addition, we have a set of benchmark tasks we can run on a model to get a score. If we chose a single benchmark and ran it on all model checkpoints and then plotted these, with checkpoint number on the x-axis and benchmark score on the y-axis, we would get a *learning curve* showing how the model improves during training, and then starts to degrade. 
