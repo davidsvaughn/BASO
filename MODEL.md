@@ -153,7 +153,9 @@ which allows us to write a modified Expected Improvement function:
 $$
 \begin{aligned} 
 & \ \ \mathbb{E}_{f \sim \mathcal{N}(\mu_{i,j}, \sigma^2_{i,j})} [\max(0,S_i - S^*)]  \\
+ = & \ \ \mathbb{E}_{f \sim \mathcal{N}(\mu_{i,j}, \sigma^2_{i,j})} [\max(0,f(x_i,t_j) + \sum_{k \neq j}^{M} \mu_{i,k} - S^*) ]  \\
  = & \ \ \mathbb{E}_{f \sim \mathcal{N}(\mu_{i,j}, \sigma^2_{i,j})} [\max(0,f(x_i,t_j)- (S^* -\sum_{k \neq j}^{M} \mu_{i,k} ))]  \\
+& \\
  =  & \ \ \mathbb{E}_f  \left[ \max \left(0, \frac{f(x_i,t_j) - \mu_{i,j}}{\sigma_{i,j}} - \frac{(S^* -\sum_{k \neq j}^{M} \mu_{i,k})-\mu_{i,j}}{\sigma_{i,j}}\right) \right] \sigma_{i,j}
 \end{aligned} 
 $$
