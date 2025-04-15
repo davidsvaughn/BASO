@@ -176,7 +176,6 @@ f_X|O \sim  \mathcal{N}(μ_{X}|O , \Sigma_{X}|O) \\
   = & \int_{v}^{\infty} (u-v) \cdot \phi(u) \, du \\
   = & \int_{v}^{\infty} u \cdot \phi(u) \, du - v \int_{v}^{\infty} \phi(u) \, du \\
   = & \ \Bigl[-\phi(u)\Bigr]_{u=v}^{u=\infty} -v \left( \int_{-\infty}^\infty \phi(u)\,du - \int_{-\infty}^v \phi(u)\,du \right) \\
-  & \\
   = & \ \ \phi(v) - v(1-\Phi(v)) 
   \end{aligned}
   \]
@@ -187,7 +186,7 @@ f_X|O \sim  \mathcal{N}(μ_{X}|O , \Sigma_{X}|O) \\
     <li>\(\Phi(-v) =1 -\Phi(v)\)</li>
   </ul>
   
-  <p>Plugging these back in yields the Expected Improvement acquisition function:</p>
+  <p>Plugging these back in yields the standard Expected Improvement acquisition function:</p>
   
   \[
   EI(x_i) = (\mu_i-y^*)\Phi \left( \frac{\mu_i - y^*}{\sigma_i} \right) + \sigma_i \phi \left( \frac{\mu_i - y^*}{\sigma_i} \right)
@@ -197,9 +196,9 @@ f_X|O \sim  \mathcal{N}(μ_{X}|O , \Sigma_{X}|O) \\
   
   <h3 id="modification-to-ei">Modification to \(EI\)</h3>
   
-  <p>As mentioned before, we are interested in using BO (Bayesian Optimization) to find the model checkpoint that acheives the highest sum of scores over all benchmark tasks \(\sum_{j=1}^M \mu_{ij}|O\), which is equivalent to maximizing the average score. We would like to use an acquisition function like \(EI\), but in its standard form it does not quite work for this modified objective function. At each iteration, we would like to evaluate each possible checkpoint-task pair \(\langle x_i,t_j \rangle\) <em>not</em> based on the expected improvement over the best individual benchmark score observed so far, \(y^*_{xt}\), but instead by the expected improvement in the sum of scores over all tasks for the given checkpoint.</p>
+  <p>As mentioned before, we are interested in using BO (Bayesian Optimization) to find the model checkpoint that acheives the highest <em>sum of scores</em> over all benchmark tasks \(\sum_{j=1}^M \mu_{ij}|O\), which is equivalent to maximizing the average score. We would like to use an acquisition function like \(EI\), but in its standard form it does not quite work for this modified objective function. At each iteration, we would like to evaluate each possible checkpoint-task pair \(\langle x_i,t_j \rangle\) <em>not</em> based on the expected improvement over the best individual benchmark score observed so far, \(y^*_{xt}\), but instead by the expected improvement in the sum of scores over all tasks for the given checkpoint.</p>
   
-  <p>One problem with this is that we have no direct observations of this sum (of scores over all tasks for a checkpoint). All we have are observations of individual scores resulting from arbitrary checkpoint-task combinations. However, as a proxy we can simply, for each candidate checkpoint \(x_i\), sum over all current posterior mean score estimates (i.e. over all tasks):</p>
+  <p>One problem with this is that we have no direct observations of this sum. All we have are observations of individual scores \( y_{ij} = f(x_i,t_j) \) resulting from arbitrary checkpoint-task combinations. However, as a proxy we can simply, for each candidate checkpoint \(x_i\), sum over all current posterior mean score estimates (i.e. over all tasks):</p>
   
   \[
   S_i = \sum_{j=1}^M \mu_{ij}|O
