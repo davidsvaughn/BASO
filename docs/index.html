@@ -163,8 +163,8 @@ f_X|O \sim  \mathcal{N}(μ_{X}|O , \Sigma_{X}|O) \\
   <p>These parameters define a probability distribution over all possible values the objective function \(f(x_i)\) might assume at \(x_i\). Using these marginal distributions, we can compute, for each candidate input \(x_i\), the <em>expected value</em> of the amount that \(f(x_i)\) will improve over the current \(y^*\):</p>
   
   \[
-  \mathbb{E}_{f \sim \mathcal{N}(\mu_i, \sigma^2_i)} [\max(0, f(x_i) - y^*)] 
-  =  \mathbb{E}_f \left[ \max \left(0, \frac{f(x_i) - \mu_i}{\sigma_i} - \frac{y^*-\mu_i}{\sigma_i}\right) \right] \sigma_i
+  \mathbb{E}_{f_i \sim \mathcal{N}(\mu_i, \sigma^2_i)} [\max(0, f(x_i) - y^*)] 
+  =  \mathbb{E}_{f_i} \left[ \max \left(0, \frac{f(x_i) - \mu_i}{\sigma_i} - \frac{y^*-\mu_i}{\sigma_i}\right) \right] \sigma_i
   \]
   
   <p>If \(f(x_i) < y^*\) there is no improvement, so we use \( \max(0,\cdot)\). Now, if we let \(v = \frac{y^*-\mu_i}{\sigma_i}\), then the right side contains an expression of the form: \(\mathbb{E}_{u \sim  \mathcal{N}(0,1)} [\max(0,u-v)]\), which can be solved analytically:</p>
@@ -198,7 +198,7 @@ f_X|O \sim  \mathcal{N}(μ_{X}|O , \Sigma_{X}|O) \\
   
   <p>As mentioned before, we are interested in using BO (Bayesian Optimization) to find the model checkpoint that acheives the highest <em>sum of scores</em> over all benchmark tasks \(\sum_{j=1}^M \mu_{ij}|O\), which is equivalent to maximizing the average score. We would like to use an acquisition function like \(EI\), but in its standard form it does not quite work for this modified objective function. At each iteration, we would like to evaluate each possible checkpoint-task pair \(\langle x_i,t_j \rangle\) <em>not</em> based on the expected improvement over the best individual benchmark score observed so far, \(y^*_{xt}\), but instead by the expected improvement in the sum of scores over all tasks for the given checkpoint.</p>
   
-  <p>One problem with this is that we have no direct observations of this sum. All we have are observations of individual scores \( y_{ij} = f(x_i,t_j) \) resulting from arbitrary checkpoint-task combinations. However, as a proxy we can simply, for each candidate checkpoint \(x_i\), sum over all current posterior mean score estimates (i.e. over all tasks):</p>
+  <p>One problem with this is that we have no direct observations of this sum. All we have are observations of individual scores \( y_{ij} = f(x_i,t_j) \) that resulted from evaluating arbitrary checkpoint-task combinations. However, as a proxy we can simply, for each candidate checkpoint \(x_i\), sum over all current posterior mean score estimates (i.e. over all \( M \) tasks):</p>
   
   \[
   S_i = \sum_{j=1}^M \mu_{ij}|O
@@ -210,15 +210,15 @@ f_X|O \sim  \mathcal{N}(μ_{X}|O , \Sigma_{X}|O) \\
   S_i = f(x_i,t_j) + \sum_{k \neq j} \mu_{ik}|O
   \]
   
-  <p>where we treat all posterior means \( \mu_{ik}|O \) as constants except we replace \( \mu_{ij}|O \) with \( f(x_i,t_j) \) which then allows us to write a modified Expected Improvement function (we drop the \(|O \) for convenience):</p>
+  <p>where we treat all posterior means \( \mu_{ik}|O \) as constants, except we replace \( \mu_{ij}|O \) with \( f(x_i,t_j) \), which then allows us to write a modified \(EI\) function such that we compute the expected value of the amount that \(S_i\) will improve over \(S_*\), where the expecatation is taken with respect to the distribution \( \mathbb{E}_{f_{ij} \sim \mathcal{N}(\mu_{ij}|O, \sigma^2_{ij}|O)} \), which is the marginal distribution of \(f\) at \(\langle x_i,t_j \rangle\) conditioned on the current observations \(O\), given by the \(GP\) posterior (we drop the \(|O \) for convenience):</p>
   
   \[
   \begin{aligned} 
-  EI(x_i,t_j) = & \ \ \mathbb{E}_{f \sim \mathcal{N}(\mu_{ij}, \sigma^2_{ij})} [\max(0,S_i - S^*)]  \\
-   = & \ \ \mathbb{E}_{f \sim \mathcal{N}(\mu_{ij}, \sigma^2_{ij})} [\max(0,f(x_i,t_j) + \sum_{k \neq j}^{M} \mu_{ik} - S^*) ]  \\
-   = & \ \ \mathbb{E}_{f \sim \mathcal{N}(\mu_{ij}, \sigma^2_{ij})} [\max(0,f(x_i,t_j)- (S^* -\sum_{k \neq j}^{M} \mu_{ik} ))]  \\
+  EI(x_i,t_j) = & \ \ \mathbb{E}_{f_{ij} \sim \mathcal{N}(\mu_{ij}, \sigma^2_{ij})} [\max(0,S_i - S^*)]  \\
+   = & \ \ \mathbb{E}_{f_{ij}} [\max(0,f(x_i,t_j) + \sum_{k \neq j}^{M} \mu_{ik} - S^*) ]  \\
+   = & \ \ \mathbb{E}_{f_{ij}} [\max(0,f(x_i,t_j)- (S^* -\sum_{k \neq j}^{M} \mu_{ik} ))]  \\
   & \\
-   =  & \ \ \mathbb{E}_f  \left[ \max \left(0, \frac{f(x_i,t_j) - \mu_{ij}}{\sigma_{ij}} - \frac{(S^* -\sum_{k \neq j}^{M} \mu_{ik})-\mu_{ij}}{\sigma_{ij}}\right) \right] \sigma_{ij}
+   =  & \ \ \mathbb{E}_{f_{ij}} \left[ \max \left(0, \frac{f(x_i,t_j) - \mu_{ij}}{\sigma_{ij}} - \frac{(S^* -\sum_{k \neq j}^{M} \mu_{ik})-\mu_{ij}}{\sigma_{ij}}\right) \right] \sigma_{ij}
   \end{aligned} 
   \]
   
