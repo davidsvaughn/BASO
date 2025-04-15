@@ -78,25 +78,17 @@
   <p>Standard GP regression is well suited for modeling the learning curve of a single benchmark. What makes a Gaussian Process different from a standard multivariate Gaussian probability distribution is that, in a GP model, the input space (in this case the space of model benchmarks) is the source of the "multiple dimensions" even though it lies along 1 dimension. Suppose we only save model benchmarks every 50 steps, up to 1000, so we can only make observations \(f(x)\) when \(x\) is drawn from \([0, 50, 100, 150,…, 1000]\). We can still use a GP regression model to define a continuous function over the entire interval \([0…1000]\). To make things simpler, let's instead define our GP regression function over a discrete input domain \(X\) of the integers 1 to N: \(X = [1,2,3,…,N]\). We can imagine modeling the vector of function values at each of these input points \(f_X = [f(x_1),…,f(x_N)]\) as a multivariate Gaussian. Before making any observations, our <em>GP Prior</em> over this domain is defined as a multivariate normal distribution:</p>
 
   \[
-    \begin{align}
-    f_X &\sim \mathcal{N}(\mu_X, \Sigma_X) \\
-    \intertext{\small{s.t.}}
-    \mu_X &= 0 \\
-    \Sigma_X &= K(X,X)
-    \end{align}
+  f_X \sim \mathcal{N}(\mu_X, \Sigma_X)
   \]
   
-  \[
-  f_X \sim  \mathcal{N}(\mu_X , \Sigma_X) \\
-  \]
+  \begin{center}
+  \small{s.t.}
+  \end{center}
   
-  \[
-  { s.t. } \\
-  \begin{aligned}
+  \begin{align}
   \mu_X &= 0 \\
   \Sigma_X &= K(X,X)
-  \end{aligned}
-  \]
+  \end{align}
   
   <p>where \(K\) is an \(N \times N\) matrix of pair-wise kernel function values \(k(x,x')\) computed on all input pairs \(x,x'\).  This kernel function models the correlation between output function values \(f(x)\) and \(f(x')\). Since the input domain (of model benchmarks) is numeric (as opposed to categorical) we would use an RBF kernel, which represents similarities between input pairs \(x,x'\) as a function of the squared distance between them \(\lVert x - x' \rVert^2\), encoding the intuition that model checkpoints that are closer together are expected to have more similar function values (i.e. benchmark scores) than two checkpoints that are farther apart. The RBF (Radial Basis Function) kernel is expressed as:</p>
   
