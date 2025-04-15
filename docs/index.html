@@ -100,32 +100,30 @@ f_X \sim \mathcal{N}(\mu_X, \Sigma_X) \\
   
   <p>Now suppose we acquire a set of observations \(O = \{X_O,Y_O\}\) by evaluating the function at a set of points (i.e. model checkpoints) \(X_O = [x_1,x_2,…,x_n]\) to obtain values (i.e. benchmark scores) \(Y_O = [y_1,y_2,…,y_n]\) where \(y_i = f(x_i)\). We could then update the model, conditional on these new observations, to obtain the <em>posterior</em> distribution over the input space \(X\), which is also a multivariate Gaussian:</p>
   
-  \[
-  f_X|O \sim  \mathcal{N}(μ_{X|O} , \Sigma_{X|O}) \\
-  \]
-  
-  \[
-  { s.t. } \\
-  \begin{aligned} 
-  μ_{X|O} &= K(X_O,X)^T K(X_O,X_O)^{-1}Y_O \\
-  \Sigma_{X|O} &= K(X,X) - K(X_O,X)^T K(X_O,X_O)^{-1}K(X_O,X)
-  \end{aligned}
-  \]
+\[
+\begin{gather}
+f_X|O \sim  \mathcal{N}(μ_{X|O} , \Sigma_{X|O}) \\
+{\scriptstyle s.t.} \\
+\begin{aligned}
+μ_{X|O} &= K(X_O,X)^T K(X_O,X_O)^{-1}Y_O \\
+\Sigma_{X|O} &= K(X,X) - K(X_O,X)^T K(X_O,X_O)^{-1}K(X_O,X)
+\end{aligned}
+\end{gather}
+\]
   
   <p>This is the standard Bayesian update procedure for a GP regression model. The <em>posterior mean</em> \(μ_{X|O}\) is just an \(N\)-length vector of means  \([\mu_1, \mu_2,…,\mu_N]\) and would be considered the actual "value" of the GP regression function at each input point \(x_i\), while the <em>posterior covariance</em> \(\Sigma_{X|O}\) is an \(N \times N\) matrix of pairwise variances.  Taking the square root of the diagonal would yield a vector of standard deviations for drawing confidence bands around the regression function.</p>
   
   <p>For clarity, we could just as well write an expression, at any particular input point \(x_i\), for the <em>marginal</em> posterior distribution of \(f(x_i)\):</p>
   
   \[
+  \begin{gather}
   f_i|O \sim  \mathcal{N}(μ_{i|O} , \sigma^2_{i|O}) \\
-  \]
-  
-  \[
-  { s.t. } \\
-  \begin{aligned} 
+  {\scriptstyle s.t.} \\
+  \begin{aligned}
   μ_{i|O} &= K(X_O,x_i)^T K(X_O,X_O)^{-1}Y_O \\
   \sigma^2_{i|O} &= K(x_i,x_i) - K(X_O,x_i)^T K(X_O,X_O)^{-1}K(X_O,x_i) \\
   \end{aligned}
+  \end{gather}
   \]
   
   <p>where \(μ_i\) and \(\sigma_i\) are the scalar mean and standard deviation of the <em>marginal</em> distribution at \(x_i\).  This illustrates another nice property of multivariate Gaussians, which is that marginals, which are simply a slice of the full distribution at a particular point \(x_i\), remain Gaussian.</p>
