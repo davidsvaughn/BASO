@@ -221,6 +221,27 @@
   &= \boxed{ (S_i - S^*)\Phi \left( \frac{S_i - S^*}{\sigma_{i,j}} \right) + \sigma_{i,j} \phi \left( \frac{S_i - S^*}{\sigma_{i,j}} \right) }
   \end{aligned} 
   \]
+
+  \[
+  \begin{aligned} 
+EI(x_i,t_j) &= (\mu_{i,j}-S^* +\sum_{k \neq j}^{M} \mu_{i,k})\Phi \left( \frac{\mu_{i,j} - S^* +\sum_{k \neq j}^{M} \mu_{i,k}}{\sigma_{i,j}} \right) + \sigma_{i,j} \phi \left( \frac{\mu_{i,j} - S^* +\sum_{k \neq j}^{M} \mu_{i,k}}{\sigma_{i,j}} \right) \\
+& \\
+\text{\fbox{$\begin{array}{r@{}l}
+EI(x_i,t_j) &= (S_i - S^*)\Phi \left( \frac{S_i - S^*}{\sigma_{i,j}} \right) + \sigma_{i,j} \phi \left( \frac{S_i - S^*}{\sigma_{i,j}} \right)
+\end{array}$}}
+\end{aligned}
+  \]
+
+  \[
+  \require{empheq}
+\begin{aligned} 
+EI(x_i,t_j) &= (\mu_{i,j}-S^* +\sum_{k \neq j}^{M} \mu_{i,k})\Phi \left( \frac{\mu_{i,j} - S^* +\sum_{k \neq j}^{M} \mu_{i,k}}{\sigma_{i,j}} \right) + \sigma_{i,j} \phi \left( \frac{\mu_{i,j} - S^* +\sum_{k \neq j}^{M} \mu_{i,k}}{\sigma_{i,j}} \right) \\
+& \\
+\end{aligned}
+\begin{empheq}[box=\fbox]{align}
+EI(x_i,t_j) &= (S_i - S^*)\Phi \left( \frac{S_i - S^*}{\sigma_{i,j}} \right) + \sigma_{i,j} \phi \left( \frac{S_i - S^*}{\sigma_{i,j}} \right)
+\end{empheq}
+  \]
   
   <p>which we can maximize in order to choose the next checkpoint-task pair \(\langle x_i,t_j \rangle\) to evaluate.</p>
 
