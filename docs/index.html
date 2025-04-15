@@ -130,11 +130,11 @@ f_X|O \sim  \mathcal{N}(μ_{X}|O , \Sigma_{X}|O) \\
   
   <p>This GP model works perfectly well for the case of optimizing the learning curve of a single benchmark. In this current formulation we would say we are looking for the \(i^*\) (i.e. checkpoint model \(x_i^*\)) that maximizes \(\mu_{i}|O\).</p>
   
-  <h4 id="optimizing-average">Optimizing an Average Function over Multiple Tasks</h4>
+  <h4 id="optimizing-average">Optimizing an Average Function over Multiple Outputs</h4>
 
   <p>But you may recall the objective function we want to maximize is the <em>average learning curve</em> over a set of benchmark tasks. One possible solution might be to fit a separate GP regression model to each benchmark task, and then average these regression curves afterwards. However, there is almost certainly some relationship (correlation) between many of these learning curves. After all, the benchmark tasks tend to be very similar in nature, in addition to the fact that they are being run on the same set of model checkpoints. Some task pairs may be highly correlated, while others not so much. We would like to be able to share information across similar (correlated) tasks to reduce the number of function evaluations required, but we don't know what these inter-task correlations are <em>a-priori</em>. A multi-task regression method that could jointly estimate these inter-task correlations AND use these correlations to share information between task-specific regression curves would be very useful.</p>
   
-  <h4 id="multi-task-gaussian-proceses">Multi-Task Gaussian Processes</h4>
+  <h3 id="multi-task-gaussian-proceses">Multi-Task Gaussian Processes</h3>
   
   <p>Well, there exists a well known extension to the standard single-output GP model called a "multi-output" or "multi-task" Gaussian process. This formulation uses the <em>ICM Kernel</em> (ICM = intrinsic co-regionalization model), which was proposed [here] as a way to induce/learn inter-task correlations. While the previous RBF kernel was defined on input pairs \(x,x'\) drawn from a 1D domain, the multi-task ICM kernel is defined on pairs of input-task tuples \(\langle x,t\rangle ,\langle x',t'\rangle\) drawn from a 2D grid. The ICM kernel \(K_{ICM}\) factors into the Kronecker product of two kernels:</p>
   
@@ -150,7 +150,7 @@ f_X|O \sim  \mathcal{N}(μ_{X}|O , \Sigma_{X}|O) \\
   
   <p>Our multi-task \(GP\) defines a posterior mean \(\mu_{ij}|O\) and standard deviation \(\sigma_{ij}|O\) for every checkpoint model \(x_i\) and benchmark task \(t_j\) combination: \(\langle x_i,t_j \rangle\). To be clear, that implies a length-\(MN \) vector of posterior means \( \mu_V|O \) and posterior standard deviations \( \sigma_V|O \). In fact, the multi-task \(GP\) posterior provides a full covariance matrix \(\Sigma_V|O\) of size \(MN \times MN\) which contains all pairwise covariances between all pairs of checkpoint-task combinations. 
 
-    In a standard Bayesian Optimization setup using a multi-task GP, the objective would be to find the optimal checkpoint-task pair. In other words, we'd want to find the \(\langle i^*,j^* \rangle\) (i.e. checkpoint model \(x_i^*\) and benchmark task \(t_j^*\)) where the posterior mean \(\mu_{ij}|O\) is maximized.</p>
+    In a standard Bayesian Optimization setup using a multi-task \(GP\), the objective would be to find the optimal checkpoint-task pair. In other words, we'd want to find the \(\langle i^*,j^* \rangle\) (i.e. checkpoint model \(x_i^*\) and benchmark task \(t_j^*\)) where the posterior mean \(\mu_{ij}|O\) is maximized.</p>
   
   <p>But we are interested in summing (averaging) over the task dimension optimizing only over the checkpoint dimension. So we want to find the \(i^*\) (model checkpoint \(x_i^*\)) where the average over tasks \(\frac{\sum_{j=1}^M \mu_{ij}|O}{M}\) is maximized. We can maximize the sum \(\sum_{j=1}^M \mu_{ij}|O\) instead since max is invariant to division by a constant.</p>
   
