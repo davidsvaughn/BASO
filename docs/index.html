@@ -203,7 +203,7 @@ f_X|O \sim  \mathcal{N}(μ_{X}|O , \Sigma_{X}|O) \\
   S_i = \sum_{j=1}^M \mu_{ij}|O
   \]
   
-  <p>We could even use actual observations \( y_{ij} \) in place of the posterior means \( \mu_{ij}|O \) for the model-task combos that have been evaluated so far, and use the posterior means \( \mu_{ij}|O \) just for the model-task combos that have not yet been evaluated. This might give a slightly more accurate estimate of the unobserved true sum \(S_i\) for each checkpoint \(x_i\), although in practice once a value \(y_{ij}\) has been observed and incorporated into the \(GP\) model, the posterior mean \(\mu_{ij}|O\) is usually very close to the observed value \(y_{ij}\).
+  <p>We could even use actual observations \( y_{ij} \) in place of the posterior means \( \mu_{ij}|O \) for the model-task combos that have been evaluated so far, and use the posterior means \( \mu_{ij}|O \) just for the model-task combos that have not yet been evaluated. This might give a slightly more accurate estimate of the unobserved true sum \(S_i\) for each checkpoint \(x_i\) (although in practice once a value \(y_{ij}\) has been observed and incorporated into the \(GP\) model, the posterior mean \(\mu_{ij}|O\) is usually very close to the observed value \(y_{ij}\)).
 Taking this idea further, we can also use the maximum value \(S^* = \max_{i}{S_i} \) as a proxy for a unobserved <em>highest sum so far</em>. Now for the purposes of our acquisition function, we would like to be able to treat \(S_i\) as a function of the single candidate pair \(\langle x_i,t_j \rangle\) under evaluation, keeping all else constant. We can acheive this by decomposing the task-sum for a candidate checkpoint \(x_i\):</p>
   
   \[
