@@ -151,16 +151,16 @@
   
   <h3 id="expected-improvement">Expected Improvement</h3>
   
-  <p>How \(EI\) usually works is that, as we acquire new observations \(y_o=f(x_o)\), we continually keep track of the maximum score \(y^*\) observed so far. After every model update step (step 2), we must consider all input points \(x_i\) not yet observed as candidates to query for the next observation. At each of these points, the current GP posterior yields a marginal posterior mean \(μ_i\) and standard deviation \(\sigma_i\).</p>
+  <p>How \(EI\) usually works is that, as we acquire new observations \(y_o=f(x_o)\), we continually keep track of the maximum function value \(y^*_x\) observed so far for any input \( x \). After every model update step (step 2), we must consider all input points \(x_i\) not yet observed as candidates to query for the next observation. At each of these points, the current GP posterior yields a marginal posterior mean \(μ_i\) and standard deviation \(\sigma_i\).</p>
   
-  <p>These parameters define a probability distribution over all possible values \(f(x_i)\) the objective function might assume at \(x_i\). Using these marginal distributions, we can compute, for each candidate input \(x_i\), the <em>expected value</em> of the amount that \(f(x_i)\) will improve over the current \(y^*\):</p>
+  <p>These parameters define a probability distribution over all possible values the objective function \(f(x_i)\) might assume at \(x_i\). Using these marginal distributions, we can compute, for each candidate input \(x_i\), the <em>expected value</em> of the amount that \(f(x_i)\) will improve over the current \(y^*_x\):</p>
   
   \[
-  \mathbb{E}_{f \sim \mathcal{N}(\mu_i, \sigma^2_i)} [\max(0, f(x_i) - y^*)] 
-  =  \mathbb{E}_f \left[ \max \left(0, \frac{f(x_i) - \mu_i}{\sigma_i} - \frac{y^*-\mu_i}{\sigma_i}\right) \right] \sigma_i
+  \mathbb{E}_{f \sim \mathcal{N}(\mu_i, \sigma^2_i)} [\max(0, f(x_i) - y^*_x)] 
+  =  \mathbb{E}_f \left[ \max \left(0, \frac{f(x_i) - \mu_i}{\sigma_i} - \frac{y^*_x-\mu_i}{\sigma_i}\right) \right] \sigma_i
   \]
   
-  <p>If \(f(x_i) < y^*\) there is no improvement, so we use \( \max(0,\cdot)\). Now, if we let \(v = \frac{y^*-\mu_i}{\sigma_i}\), then the right side contains an expression of the form: \(\mathbb{E}_{u \sim  \mathcal{N}(0,1)} [\max(0,u-v)]\), which can be solved analytically:</p>
+  <p>If \(f(x_i) < y^*_x\) there is no improvement, so we use \( \max(0,\cdot)\). Now, if we let \(v = \frac{y^*_x-\mu_i}{\sigma_i}\), then the right side contains an expression of the form: \(\mathbb{E}_{u \sim  \mathcal{N}(0,1)} [\max(0,u-v)]\), which can be solved analytically:</p>
 
   \[
   \begin{aligned}
@@ -174,7 +174,7 @@
   \end{aligned}
   \]
   
-  <p>where \(\phi\) and \(\Phi\) are the standard Gaussian PDF and CDF, respectively. We can further simplify using \(v = \frac{y^*-\mu_i}{\sigma_i}\) plus the identities:</p>
+  <p>where \(\phi\) and \(\Phi\) are the standard Gaussian PDF and CDF, respectively. We can further simplify using \(v = \frac{y^*_x-\mu_i}{\sigma_i}\) plus the identities:</p>
   <ul>
     <li>\(\phi(-v) = \phi(v)\)</li>
     <li>\(\Phi(-v) =1 -\Phi(v)\)</li>
@@ -183,7 +183,7 @@
   <p>Plugging these back in yields the Expected Improvement acquisition function:</p>
   
   \[
-  EI(x_i) = (\mu_i-y^*)\Phi \left( \frac{\mu_i - y^*}{\sigma_i} \right) + \sigma_i \phi \left( \frac{\mu_i - y^*}{\sigma_i} \right)
+  EI(x_i) = (\mu_i-y^*_x)\Phi \left( \frac{\mu_i - y^*_x}{\sigma_i} \right) + \sigma_i \phi \left( \frac{\mu_i - y^*_x}{\sigma_i} \right)
   \]
   
   <p>The \(x_i\) with the greatest \(EI(x_i)\) value would be chosen for the next function evaluation.</p>
@@ -216,7 +216,7 @@
   \end{aligned} 
   \]
   
-  <p>The purpose of the \(S_i\) decomposition is that it has allowed us, in the last step, to standardize the expression (as before), so once again we have an expression of the form: \(\mathbb{E}_{u \sim \mathcal{N}(0,1)} [\max(0,u-v)]\), which means we can use the same closed form expression derived earlier for \(EI\), except we substitute \(S^* -\sum_{k \neq j}^{M} \mu_{ik}\) for \(y^*\):</p>
+  <p>The purpose of the \(S_i\) decomposition is that it has allowed us, in the last step, to standardize the expression (as before), so once again we have an expression of the form: \(\mathbb{E}_{u \sim \mathcal{N}(0,1)} [\max(0,u-v)]\), which means we can use the same closed form expression derived earlier for \(EI\), except we substitute \(S^* -\sum_{k \neq j}^{M} \mu_{ik}\) for \(y^*_x\):</p>
 
   \[
   \begin{aligned} 
