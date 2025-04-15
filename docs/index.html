@@ -143,9 +143,9 @@
   
   <p>Now we can picture our input domain as a 2D matrix (grid) with model checkpoints \(X = [1,2,3,…,N]\) along the horizontal dimension, and the space of all benchmark tasks \(T= [1,2,3,…,M]\) along the vertical dimension. As a notational convenience we sometimes <em>vectorize</em> (i.e. flatten) this \(N \times M\) matrix into a one dimensional <em>all-pairs</em> vector \(V_{X,T} = X \otimes  T\) of length \(MN\), but it represents the exact same quantity.</p>
   
-  <p>Now we have a posterior mean \(\mu_{ij}\) and standard deviation \(\sigma_{ij}\) defined for every checkpoint model \(x_i\) and benchmark task \(t_j\) combination: \(\langle x_i,t_j \rangle\). In a standard Bayesian Optimization setup using a multi-task GP, the objective would be to find the optimal checkpoint-task pair. In other words, we'd want to find the \(\langle i^*,j^* \rangle\) (i.e. checkpoint model \(x_i^*\) and benchmark task \(t_j^*\)) where the posterior mean \(\mu_{i,j|O}\) is maximized.</p>
+  <p>Now we have a posterior mean \(\mu_{ij}\) and standard deviation \(\sigma_{ij}\) defined for every checkpoint model \(x_i\) and benchmark task \(t_j\) combination: \(\langle x_i,t_j \rangle\). In a standard Bayesian Optimization setup using a multi-task GP, the objective would be to find the optimal checkpoint-task pair. In other words, we'd want to find the \(\langle i^*,j^* \rangle\) (i.e. checkpoint model \(x_i^*\) and benchmark task \(t_j^*\)) where the posterior mean \(\mu_{ij}|O\) is maximized.</p>
   
-  <p>But we are interested in summing (averaging) over the task dimension and finding the optimal checkpoint. So we want to find the \(i^*\) (model checkpoint \(x_i^*\)) where the average over tasks \(\frac{\sum_{j=1}^M \mu_{i,j|O}}{M}\) is maximized. We maximize the sum \(\sum_{j=1}^M \mu_{i,j|O}\) instead since max is invariant to division by a constant.</p>
+  <p>But we are interested in summing (averaging) over the task dimension and finding the optimal checkpoint. So we want to find the \(i^*\) (model checkpoint \(x_i^*\)) where the average over tasks \(\frac{\sum_{j=1}^M \mu_{ij}|O}{M}\) is maximized. We maximize the sum \(\sum_{j=1}^M \mu_{ij}|O\) instead since max is invariant to division by a constant.</p>
   
   <p>The one question remaining is how to perform step 1 -- how do we use the current regression model to decide which point to query next? In the standard single-output setting, a common method is to maximize an <em>acquisition function</em> to decide. An acquisition function is typically defined in such a way to balance our desire to maximize the current regression model and to reduce uncertainty in the regression model. There are many choices, but one of the most popular is called <em>Expected Improvement</em>.</p>
   
@@ -186,12 +186,12 @@
   
   <h4 id="modification-to-ei">Modification to EI</h4>
   
-  <p>As mentioned before, we are interested in using BO (Bayesian Optimization) to find the model checkpoint that acheives the highest sum of scores over all benchmark tasks \(\sum_{j=1}^M \mu_{i,j|O}\), which is equivalent to maximizing the average score. We would like to used an acquisition function like EI, but in its standard form it does not quite work for this modified objective function. At each iteration, we would like to evaluate each possible checkpoint-task pair \(\langle x_i,t_j \rangle\) <em>not</em> based on the expected improvement over the best individual benchmark score observed so far, \(y^*_{x,t}\), but instead by the expected improvement in the sum of scores over all tasks for the given checkpoint.</p>
+  <p>As mentioned before, we are interested in using BO (Bayesian Optimization) to find the model checkpoint that acheives the highest sum of scores over all benchmark tasks \(\sum_{j=1}^M \mu_{ij}|O\), which is equivalent to maximizing the average score. We would like to used an acquisition function like EI, but in its standard form it does not quite work for this modified objective function. At each iteration, we would like to evaluate each possible checkpoint-task pair \(\langle x_i,t_j \rangle\) <em>not</em> based on the expected improvement over the best individual benchmark score observed so far, \(y^*_{x,t}\), but instead by the expected improvement in the sum of scores over all tasks for the given checkpoint.</p>
   
   <p>One problem with this is that we have no direct observations of this sum (of scores over all tasks for a checkpoint). All we have are observations of individual scores resulting from arbitrary checkpoint-task combinations. However, as a proxy we can simply, for each candidate checkpoint \(x_i\), sum over all current posterior mean score estimates (i.e. over all tasks):</p>
   
   \[
-  S_i = \sum_{j=1}^M \mu_{i,j|O}
+  S_i = \sum_{j=1}^M \mu_{ij}|O
   \]
   
   <p>as well as use the maximum value \(S^*\) as a proxy for a hypothetical <em>highest sum so far observed</em>. Now for the purposes of our acquisition function, we would like to be able to treat \(S_i\) as a function of the single candidate pair \(\langle x_i,t_j \rangle\) under evaluation, keeping all else constant. We can acheive this by decomposing the sum as:</p>
