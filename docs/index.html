@@ -227,11 +227,11 @@ Taking this idea further, we can also use the maximum value \(S^* = \max_{i}{S_i
   <p>The purpose of the \(S_i\) decomposition is that it has allowed us, in the last step, to standardize the expression (as before), so once again we have an expression of the form \(\mathbb{E}_{u \sim \mathcal{N}(0,1)} [\max(0,u-v)]\), except this time \(S^* -\sum_{k \neq j}^{M} \mu_{ik}\) has been substituted for \(y^*\). As long as we carry this substitution forward, we can reuse the same result derived earlier:</p>
 
   \[
-  \begin{aligned} 
-  EI(x_i,t_j) &= (\mu_{ij}-S^* +\sum_{k \neq j}^{M} \mu_{ik})\Phi \left( \frac{\mu_{ij} - S^* +\sum_{k \neq j}^{M} \mu_{ik}}{\sigma_{ij}} \right) + \sigma_{ij} \phi \left( \frac{\mu_{ij} - S^* +\sum_{k \neq j}^{M} \mu_{ik}}{\sigma_{ij}} \right) \\
-  & \\
-  &\kern-4.2em\boxed{EI(x_i,t_j) = (S_i - S^*)\Phi \left( \frac{S_i - S^*}{\sigma_{ij}} \right) + \sigma_{ij} \phi \left( \frac{S_i - S^*}{\sigma_{ij}} \right)}
-  \end{aligned}
+  EI(x_i,t_j) = (\mu_{ij}-S^* +\sum_{k \neq j}^{M} \mu_{ik})\Phi \left( \frac{\mu_{ij} - S^* +\sum_{k \neq j}^{M} \mu_{ik}}{\sigma_{ij}} \right) + \sigma_{ij} \phi \left( \frac{\mu_{ij} - S^* +\sum_{k \neq j}^{M} \mu_{ik}}{\sigma_{ij}} \right)
+  \]
+
+  \[
+  \boxed{EI(x_i,t_j) = (S_i - S^*)\Phi \left( \frac{S_i - S^*}{\sigma_{ij}} \right) + \sigma_{ij} \phi \left( \frac{S_i - S^*}{\sigma_{ij}} \right)}
   \]
   
   <p>The final, boxed equation gives the modified \(EI\) formula, which we can maximize in order to choose the next checkpoint-task pair \(\langle x_i,t_j \rangle\) to evaluate. </p>
