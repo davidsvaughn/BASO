@@ -56,8 +56,6 @@
   
   <p>However, running a model checkpoint on a benchmark is costly. Suppose that running a single model on a single benchmark takes 1 minute, and we have 100 model checkpoints and 100 benchmark tasks. Running all models on all tasks would take 10000 minutes = 1 week. This case may be rather extreme, but even in less extreme cases we would like to find ways of reliably estimating the best overall model checkpoint without running all model-task pairs.</p>
   
-  <p>Noisy observations... in addition to interpolating between observations to impute missing data, regression helps absorb/smooth out noise to reveal underlying pattern.</p>
-  
   <h3 id="bayesian-optimization">Bayesian Optimization</h3>
 
   <p>Bayesian Optimization is a common approach for such optimization scenarios, when the function we are trying to optimize is expensive to compute. Sometimes it's called "black-box" optimization since we treat the function \(f\) as a "black-box" and only have access to it by querying it's value at specific points. The basic approach is to repeatedly query (i.e. evaluate) the function so as to acquire more sample points with which to estimate a regression model, and then use that regression model to optimize the function. Naturally this process is a loop, the main steps being:</p>
@@ -235,6 +233,10 @@ Taking this idea further, we can also use the maximum value \(S^* = \max_{i}{S_i
   \]
   
   <p>The final, boxed equation gives the modified \(EI\) formula, which we can maximize in order to choose the next checkpoint-task pair \(\langle x_i,t_j \rangle\) to evaluate. </p>
+
+  <h3>TODO:</h3>
+
+  <p>[Noisy observations... noise term inside kernel matrix (???)... in addition to interpolating between observations to impute (paper!) missing data, regression helps absorb/smooth out noise to reveal underlying pattern.]</p>
 
 </body>
 </html>
