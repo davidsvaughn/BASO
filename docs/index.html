@@ -152,7 +152,7 @@ f_X|O \sim  \mathcal{N}(μ_{X}|O , \Sigma_{X}|O) \\
 
     In a standard Bayesian Optimization setup using a multi-task GP, the objective would be to find the optimal checkpoint-task pair. In other words, we'd want to find the \(\langle i^*,j^* \rangle\) (i.e. checkpoint model \(x_i^*\) and benchmark task \(t_j^*\)) where the posterior mean \(\mu_{ij}|O\) is maximized.</p>
   
-  <p>But we are interested in summing (averaging) over the task dimension and finding the optimal checkpoint. So we want to find the \(i^*\) (model checkpoint \(x_i^*\)) where the average over tasks \(\frac{\sum_{j=1}^M \mu_{ij}|O}{M}\) is maximized. We maximize the sum \(\sum_{j=1}^M \mu_{ij}|O\) instead since max is invariant to division by a constant.</p>
+  <p>But we are interested in summing (averaging) over the task dimension optimizing only over the checkpoint dimension. So we want to find the \(i^*\) (model checkpoint \(x_i^*\)) where the average over tasks \(\frac{\sum_{j=1}^M \mu_{ij}|O}{M}\) is maximized. We can maximize the sum \(\sum_{j=1}^M \mu_{ij}|O\) instead since max is invariant to division by a constant.</p>
   
   <p>The one question remaining is how to perform step 1 -- how do we use the current regression model to decide which point to query next? In the standard single-output setting, a common method is to maximize an <em>acquisition function</em> to decide. An acquisition function is typically defined in such a way to balance our desire to maximize the current regression model and to reduce uncertainty in the regression model. There are many choices, but one of the most popular is called <em>Expected Improvement</em>.</p>
   
