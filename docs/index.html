@@ -151,7 +151,7 @@
   
   <h3 id="expected-improvement">Expected Improvement</h3>
   
-  <p>How \(EI\) usually works is that, as we acquire new observations \(y_o=f(x_o)\), we continually keep track of the maximum function value \(y^*\) observed so far for any input \( x \). After every model update step (step 2), we must consider all input points \(x_i\) not yet observed as candidates to query for the next observation. At each of these points, the current GP posterior yields a marginal posterior mean \(μ_i\) and standard deviation \(\sigma_i\).</p>
+  <p>How \(EI\) usually works is that, as we acquire new observations \(y_o=f(x_o)\), we continually keep track of the maximum function value \(y^*_x\) observed so far for any input \( x \). After every model update step (step 2), we must consider all input points \(x_i\) not yet observed as candidates to query for the next observation. At each of these points, the current GP posterior yields a marginal posterior mean \(μ_i\) and standard deviation \(\sigma_i\).</p>
   
   <p>These parameters define a probability distribution over all possible values the objective function \(f(x_i)\) might assume at \(x_i\). Using these marginal distributions, we can compute, for each candidate input \(x_i\), the <em>expected value</em> of the amount that \(f(x_i)\) will improve over the current \(y^*\):</p>
   
