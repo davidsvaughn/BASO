@@ -198,13 +198,13 @@
   S_i = \sum_{j=1}^M \mu_{ij}|O
   \]
   
-  <p>as well as use the maximum value \(S^*\) as a proxy for a unobserved <em>highest sum so far</em>. Now for the purposes of our acquisition function, we would like to be able to treat \(S_i\) as a function of the single candidate pair \(\langle x_i,t_j \rangle\) under evaluation, keeping all else constant. We can acheive this by decomposing the task-sum for a candidate checkpoint \(x_i\):</p>
+  <p>as well as use the maximum value \(S^* = \max_{i}{S_i} \) as a proxy for a unobserved <em>highest sum so far</em>. Now for the purposes of our acquisition function, we would like to be able to treat \(S_i\) as a function of the single candidate pair \(\langle x_i,t_j \rangle\) under evaluation, keeping all else constant. We can acheive this by decomposing the task-sum for a candidate checkpoint \(x_i\):</p>
   
   \[
   S_i = f(x_i,t_j) + \sum_{k \neq j} \mu_{ik}|O
   \]
   
-  <p>where we treat all posterior means \( \mu_{ik}|O \) as constants except we've replace \( \mu_{ij}|O \) with \( f(x_i,t_j) \)which then allows us to write a modified Expected Improvement function (we drop the \(|O \)) for convenience):</p>
+  <p>where we treat all posterior means \( \mu_{ik}|O \) as constants except we replace \( \mu_{ij}|O \) with \( f(x_i,t_j) \) which then allows us to write a modified Expected Improvement function (we drop the \(|O \) for convenience):</p>
   
   \[
   \begin{aligned} 
@@ -216,7 +216,23 @@
   \end{aligned} 
   \]
   
-  <p>The purpose of the \(S_i\) decomposition is that it has allowed us, in the last step, to standardize the expression (as before), so once again we have an expression of the form: \(\mathbb{E}_{u \sim \mathcal{N}(0,1)} [\max(0,u-v)]\), which means we can use the same closed form expression derived earlier for \(EI\), except we substitute \(S^* -\sum_{k \neq j}^{M} \mu_{ik}\) for \(y^*_x\):</p>
+  <p>The purpose of the \(S_i\) decomposition is that it has allowed us, in the last step, to standardize the expression (as before), so once again we have an expression of the form: \(\mathbb{E}_{u \sim \mathcal{N}(0,1)} [\max(0,u-v)]\), except \(S^* -\sum_{k \neq j}^{M} \mu_{ik}\) has been substituted for \(y^*_x\). As long as we carry this substitution forward, we can reuse the same result derived earlier:</p>
+
+  \[
+  \begin{aligned} 
+  EI(x_i,t_j) &= (\mu_{ij}-S^* +\sum_{k \neq j}^{M} \mu_{ik})\Phi \left( \frac{\mu_{ij} - S^* +\sum_{k \neq j}^{M} \mu_{ik}}{\sigma_{ij}} \right) + \sigma_{ij} \phi \left( \frac{\mu_{ij} - S^* +\sum_{k \neq j}^{M} \mu_{ik}}{\sigma_{ij}} \right)
+  \end{aligned}
+  \]
+
+  <p>which simplifies to:</p>
+
+  [\
+  \begin{aligned} 
+  &\kern-4.2em\boxed{EI(x_i,t_j) = (S_i - S^*)\Phi \left( \frac{S_i - S^*}{\sigma_{ij}} \right) + \sigma_{ij} \phi \left( \frac{S_i - S^*}{\sigma_{ij}} \right)}
+  \end{aligned}
+  \]
+
+  <p>which simplifies to:</p>
 
   \[
   \begin{aligned} 
