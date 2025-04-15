@@ -210,7 +210,7 @@ f_X|O \sim  \mathcal{N}(μ_{X}|O , \Sigma_{X}|O) \\
   S_i = f(x_i,t_j) + \sum_{k \neq j} \mu_{ik}|O
   \]
   
-  <p>where we treat all posterior means \( \mu_{ik}|O \) as constants, except we replace \( \mu_{ij}|O \) with \( f(x_i,t_j) \), which then allows us to write a modified \(EI\) function such that we compute the expected value of the amount that \(S_i\) will improve over \(S^*\), where the expecatation is taken with respect to the distribution \( f_{ij} \sim \mathcal{N}(\mu_{ij}|O, \sigma^2_{ij}|O) \), which is the \(GP\) marginal distribution of \(f\) at \(\langle x_i,t_j \rangle\) given the current observations \(O\)(we drop the \(|O \) for convenience):</p>
+  <p>where we treat all posterior means \( \mu_{ik}|O \) as constants, except we replace \( \mu_{ij}|O \) with \( f(x_i,t_j) \), which then allows us to write a modified \(EI\) function such that we compute the expected value of the amount that \(S_i\) will improve over \(S^*\), where the expecatation is taken with respect to the distribution \( f_{ij} \sim \mathcal{N}(\mu_{ij}|O, \sigma^2_{ij}|O) \), which is the \(GP\) marginal distribution of \(f\) at \(\langle x_i,t_j \rangle\) given the current observations \(O\) (we drop the \(|O \) for convenience):</p>
   
   \[
   \begin{aligned} 
