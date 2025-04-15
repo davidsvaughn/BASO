@@ -197,13 +197,14 @@ f_X|O \sim  \mathcal{N}(μ_{X}|O , \Sigma_{X}|O) \\
   
   <p>As mentioned before, we are interested in using BO (Bayesian Optimization) to find the model checkpoint that acheives the highest <em>sum of scores</em> over all benchmark tasks \(\sum_{j=1}^M \mu_{ij}|O\), which is equivalent to maximizing the average score (modulo division by a constant). We would like to use an acquisition function like \(EI\), but in its standard form it does not quite work for this modified objective function. At each iteration, we would like to evaluate each possible checkpoint-task pair \(\langle x_i,t_j \rangle\) <em>not</em> based on the expected improvement over the best individual benchmark score observed so far, \(y^*_{xt}\), but instead by the expected improvement in the <em>sum of scores over all tasks</em> for the given checkpoint.</p>
   
-  <p>One problem with this is that we have no direct observations of this sum. All we have are observations of individual scores \( y_{ij} = f(x_i,t_j) \) that resulted from evaluating arbitrary checkpoint-task combinations. However, as a proxy we can simply, for each candidate checkpoint \(x_i\), sum over all current posterior mean score estimates (i.e. over all \( M \) tasks):</p>
+  <p>One problem with this is that we have no direct observations of this sum. All we have are observations of individual scores \( y_{ij} = f(x_i,t_j) \) that resulted from evaluating arbitrary checkpoint-task combinations. However, as a proxy we can simply do the following: for each candidate checkpoint \(x_i\) compute the sum over all current posterior mean score estimates (i.e. over all \( M \) tasks):</p>
   
   \[
   S_i = \sum_{j=1}^M \mu_{ij}|O
   \]
   
-  <p>as well as use the maximum value \(S^* = \max_{i}{S_i} \) as a proxy for a unobserved <em>highest sum so far</em>. Now for the purposes of our acquisition function, we would like to be able to treat \(S_i\) as a function of the single candidate pair \(\langle x_i,t_j \rangle\) under evaluation, keeping all else constant. We can acheive this by decomposing the task-sum for a candidate checkpoint \(x_i\):</p>
+  <p>We could even use actual observations \( y_{ij} \) in place of the posterior means \( \mu_{ij}|O \) for the model-task combos that have been evaluated so far, and use the posterior means \( \mu_{ij}|O \) just for the model-task combos that have not yet been evaluated. This might give a slightly more accurate estimate of the unobserved true sum \(S_i\) for each checkpoint \(x_i\), although in practice once a value \(y_{ij}\) has been observed and incorporated into the \(GP\) model, the posterior mean \(\mu_{ij}|O\) is usually very close to the observed value \(y_{ij}\).
+Taking this idea further, we can also use the maximum value \(S^* = \max_{i}{S_i} \) as a proxy for a unobserved <em>highest sum so far</em>. Now for the purposes of our acquisition function, we would like to be able to treat \(S_i\) as a function of the single candidate pair \(\langle x_i,t_j \rangle\) under evaluation, keeping all else constant. We can acheive this by decomposing the task-sum for a candidate checkpoint \(x_i\):</p>
   
   \[
   S_i = f(x_i,t_j) + \sum_{k \neq j} \mu_{ik}|O
