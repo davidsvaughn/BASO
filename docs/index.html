@@ -150,7 +150,7 @@ f_X|O \sim  \mathcal{N}(μ_{X}|O , \Sigma_{X}|O) \\
   
   <p>Our multi-task \(GP\) defines a posterior mean \(\mu_{ij}|O\) and standard deviation \(\sigma_{ij}|O\) for every checkpoint model \(x_i\) and benchmark task \(t_j\) combination: \(\langle x_i,t_j \rangle\). To be clear, that implies a length-\(MN \) vector of posterior means \( \mu_V|O \) and posterior standard deviations \( \sigma_V|O \). In fact, the multi-task \(GP\) posterior provides a full covariance matrix \(\Sigma_V|O\) of size \(MN \times MN\) which contains all pairwise covariances between all pairs of checkpoint-task combinations. 
 
-    In a standard Bayesian Optimization setup using a multi-task \(GP\), the objective would be to find the optimal checkpoint-task pair. In other words, we'd want to find the \(\langle i^*,j^* \rangle\) (i.e. checkpoint model \(x_i^*\) and benchmark task \(t_j^*\)) where the posterior mean \(\mu_{ij}|O\) is maximized.</p>
+    In a standard Bayesian Optimization setup using a multi-task \(GP\), the objective would be to find the optimal checkpoint-task pair. In other words, we'd want to find the \(\langle x^*_i,t^*_j \rangle\) such that the posterior mean \(\mu_{ij}|O\) is maximal.</p>
   
   <p>But we are interested in summing (averaging) over the task dimension and optimizing only over the checkpoint dimension. So we want to find the \(i^*\) (model checkpoint \(x_i^*\)) where the average over tasks \(\frac{\sum_{j=1}^M \mu_{ij}|O}{M}\) is maximized. We can maximize the sum \(\sum_{j=1}^M \mu_{ij}|O\) instead since max is invariant to division by a constant.</p>
   
