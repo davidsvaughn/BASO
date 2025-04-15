@@ -160,7 +160,7 @@
   =  \mathbb{E}_f \left[ \max \left(0, \frac{f(x_i) - \mu_i}{\sigma_i} - \frac{y^*-\mu_i}{\sigma_i}\right) \right] \sigma_i
   \]
   
-  <p>If \(f(x_i) < y^*\) there is no improvement, so we use \(0\) instead. Now, if we let \(v = \frac{y^*-\mu_i}{\sigma_i}\), then the right side contains an expression of the form: \(\mathbb{E}_{u \sim  \mathcal{N}(0,1)} [\max(0,u-v)]\), which can be solved analytically:</p>
+  <p>If \(f(x_i) < y^*\) there is no improvement, so we use \( \max(0,\cdot)\). Now, if we let \(v = \frac{y^*-\mu_i}{\sigma_i}\), then the right side contains an expression of the form: \(\mathbb{E}_{u \sim  \mathcal{N}(0,1)} [\max(0,u-v)]\), which can be solved analytically:</p>
 
   \[
   \begin{aligned}
