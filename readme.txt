@@ -32,6 +32,17 @@ pip install --upgrade spyder
 
 
 ----------------------------------------------------------------
+# image magick
+magick convert -delay 8 -loop 0 posterior_mean_*.png baso1.gif
+
+# ffmpeg
+ffmpeg -framerate 20 -i posterior_mean_%d.png          \
+       -vf "scale=1280:-1:flags=lanczos,split[s0][s1];    \
+            [s0]palettegen[p];                           \
+            [s1][p]paletteuse"                           \
+       -loop 0 baso_1280.gif
+
+----------------------------------------------------------------
 
 mkdir post
 
