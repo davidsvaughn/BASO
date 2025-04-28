@@ -140,6 +140,12 @@ def plot_multiple_columns(test_indices=[1, 2, 3, 4, 17, 18, 22, 28, 37, 40, 66],
     
     # Ensure plots directory exists
     os.makedirs(plots_dir, exist_ok=True)
+    
+    rand_seed = random.randint(1000, 10000)
+    rand_seed = 1521
+    random.seed(rand_seed)
+    np.random.seed(rand_seed)
+    print(f"Random seed: {rand_seed}")
 
     # Load data
     file_path = os.path.join(data_dir, filename)
@@ -162,7 +168,7 @@ def plot_multiple_columns(test_indices=[1, 2, 3, 4, 17, 18, 22, 28, 37, 40, 66],
     X_feats = df['CHECKPOINT'].apply(lambda x: int(x.split('-')[1])).values
     
     # Create figure
-    plt.figure(figsize=(12, 8))
+    plt.figure(figsize=(18, 10))
     
     # Get all column names and identify TEST columns
     all_columns = df.columns.tolist()
@@ -172,7 +178,6 @@ def plot_multiple_columns(test_indices=[1, 2, 3, 4, 17, 18, 22, 28, 37, 40, 66],
     if isinstance(test_indices, int):
         n_columns = min(test_indices, len(all_test_columns))  # Ensure we don't try to select more columns than available
         # Set a seed for reproducibility, but allow different runs to get different random selections
-        random.seed(datetime.now().timestamp())
         selected_columns = random.sample(all_test_columns, n_columns)
         print(f"Randomly selected {n_columns} columns: {', '.join(selected_columns)}")
         
@@ -198,7 +203,7 @@ def plot_multiple_columns(test_indices=[1, 2, 3, 4, 17, 18, 22, 28, 37, 40, 66],
     normalized_data = {}
     original_data = {}  # Store original data for optional plotting
     # Set a random seed based on column names for consistent jitter across runs
-    np.random.seed(42)
+    # np.random.seed(42)
     
     for col_name, values in data_to_plot.items():
         # Generate a unique seed for each column based on its name
@@ -249,10 +254,13 @@ def plot_multiple_columns(test_indices=[1, 2, 3, 4, 17, 18, 22, 28, 37, 40, 66],
             original_data[col_name] = original_normalized
     
     # Reset random seed
-    np.random.seed(None)
+    # np.random.seed(None)
     
     # Create a custom color palette with more distinct colors
-    palette = sns.color_palette("husl", len(normalized_data))
+    palette = sns.color_palette("husl", 5* len(normalized_data))
+    # rotate the palette to avoid reds
+    n = 3
+    palette = palette[n:] + palette[:n]
     
     # Plot each normalized and smoothed column with a different color
     for i, (col_name, values) in enumerate(normalized_data.items()):
@@ -264,9 +272,9 @@ def plot_multiple_columns(test_indices=[1, 2, 3, 4, 17, 18, 22, 28, 37, 40, 66],
             plt.plot(X_feats, original_data[col_name], linestyle='--', linewidth=1.5, color=palette[i], alpha=0.7)
     
     # Set plot properties with seaborn styling
-    plt.xlabel('Checkpoint', fontsize=14)
-    plt.ylabel('Performance', fontsize=14)
-    plt.title(f'Performance on Multiple Benchmarks', fontsize=16)
+    plt.xlabel('Model Checkpoint (Global Step)', fontsize=18)
+    plt.ylabel('Performance', fontsize=18)
+    plt.title(f'Benchmark Learning Curve', fontsize=20)
     # plt.legend(loc='best', frameon=True, framealpha=0.7)
     
     # Calculate the actual min and max values across all normalized data after jitter
@@ -282,7 +290,7 @@ def plot_multiple_columns(test_indices=[1, 2, 3, 4, 17, 18, 22, 28, 37, 40, 66],
     
     # Save the plot
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    plot_path = os.path.join(plots_dir, f'multiple_columns_plot_{timestamp}.png')
+    plot_path = os.path.join(plots_dir, f'multiple_columns_plot_{rand_seed}.png')
     plt.savefig(plot_path)
     plt.close()
     
@@ -338,7 +346,10 @@ def plot_clustered_columns(filename='phi4-math-4claude.txt',
                           bandwidth=15, 
                           n_clusters=4, 
                           min_cluster_size=3,
+                          max_cluster_size=6,
                           corr_min = 0.95,
+                          selected_clusters=None,
+                          show_legend=False,
                           ):
     """
     Create a plot showing clustered TEST columns based on correlation between
@@ -349,6 +360,10 @@ def plot_clustered_columns(filename='phi4-math-4claude.txt',
         bandwidth (float): Bandwidth parameter for Epanechnikov kernel regression
         n_clusters (int): Number of clusters for K-means
         min_cluster_size (int): Minimum number of members per cluster to display
+        max_cluster_size (int): Maximum number of members per cluster to display
+        corr_min (float): Minimum correlation threshold for cluster members
+        selected_clusters (list, optional): List of specific cluster indices to display.
+                                           If None, all valid clusters are displayed.
         
     Returns:
         None: Saves the plot to the plots directory
@@ -357,6 +372,13 @@ def plot_clustered_columns(filename='phi4-math-4claude.txt',
     parent_dir = os.path.dirname(current_dir)
     data_dir = os.path.join(parent_dir, 'data')
     plots_dir = os.path.join(current_dir, 'plots')
+    
+    
+    rand_seed = random.randint(1000, 10000)
+    rand_seed = 6197
+    random.seed(rand_seed)
+    np.random.seed(rand_seed)
+    print(f"Random seed: {rand_seed}")
     
     # Ensure plots directory exists
     os.makedirs(plots_dir, exist_ok=True)
@@ -432,77 +454,211 @@ def plot_clustered_columns(filename='phi4-math-4claude.txt',
     for i, label in enumerate(cluster_labels):
         if label not in cluster_counts:
             cluster_counts[label] = []
-        cluster_counts[label].append(all_test_columns[i])
+        cluster_counts[label].append((all_test_columns[i], i))  # Store column name and index
     
-    # Filter clusters with at least min_cluster_size members
-    valid_clusters = {label: members for label, members in cluster_counts.items() 
-                     if len(members) >= min_cluster_size}
+    # Create a mapping from column name to index in the correlation matrix
+    col_to_idx = {col: i for i, col in enumerate(all_test_columns)}
+    
+    # Filter and refine clusters to ensure all members have correlation >= corr_min with each other
+    valid_clusters = {}
+    for label, members_with_idx in cluster_counts.items():
+        if len(members_with_idx) < min_cluster_size:
+            continue  # Skip clusters that are too small
+            
+        # Extract just the column names for easier processing
+        members = [m[0] for m in members_with_idx]
+        
+        # Iteratively remove members until all remaining members have correlation >= corr_min with each other
+        while len(members) >= min_cluster_size:
+            # Check if all pairs have correlation >= corr_min
+            all_above_threshold = True
+            lowest_avg_corr = float('inf')
+            member_to_remove = None
+            
+            # Calculate average correlation for each member with all other members
+            avg_corrs = {}
+            for i, member1 in enumerate(members):
+                idx1 = col_to_idx[member1]
+                total_corr = 0
+                below_threshold_count = 0
+                
+                for member2 in members:
+                    if member1 == member2:
+                        continue
+                    idx2 = col_to_idx[member2]
+                    if corr_matrix[idx1, idx2] < corr_min:
+                        below_threshold_count += 1
+                    total_corr += corr_matrix[idx1, idx2]
+                
+                # If any member has correlations below threshold with others, the cluster doesn't satisfy the condition
+                if below_threshold_count > 0:
+                    all_above_threshold = False
+                    avg_corr = total_corr / (len(members) - 1)
+                    avg_corrs[member1] = avg_corr
+                    if avg_corr < lowest_avg_corr:
+                        lowest_avg_corr = avg_corr
+                        member_to_remove = member1
+            
+            # If all pairs have correlation >= corr_min, we're done with this cluster
+            if all_above_threshold:
+                break
+                
+            # Otherwise, remove the member with the lowest average correlation
+            if member_to_remove:
+                members.remove(member_to_remove)
+            else:
+                # Shouldn't happen, but just in case
+                break
+        
+        # Only keep clusters that still have enough members
+        if len(members) >= min_cluster_size:
+            # If the cluster is too large, select the members with highest average correlation
+            if len(members) > max_cluster_size:
+                # Calculate average correlation for each member with all other members
+                avg_corrs = {}
+                for member in members:
+                    idx1 = col_to_idx[member]
+                    total_corr = 0
+                    for other_member in members:
+                        if member == other_member:
+                            continue
+                        idx2 = col_to_idx[other_member]
+                        total_corr += corr_matrix[idx1, idx2]
+                    avg_corrs[member] = total_corr / (len(members) - 1)
+                
+                # Sort members by average correlation (highest first)
+                sorted_members = sorted(members, key=lambda m: avg_corrs[m], reverse=True)
+                members = sorted_members[:max_cluster_size]
+            
+            valid_clusters[label] = members
     
     print(f"Found {len(valid_clusters)} clusters with at least {min_cluster_size} members:")
     for label, members in valid_clusters.items():
         print(f"  Cluster {label}: {len(members)} members")
     
     # Create figure
-    plt.figure(figsize=(14, 10))
+    plt.figure(figsize=(18, 10))
     
     # Create a color palette for clusters
+    # cluster_palette = sns.color_palette("husl", len(valid_clusters))
+    
+    # get palette without reds
     cluster_palette = sns.color_palette("husl", len(valid_clusters))
+    # rotate the pallete 3 times
+    n = 4
+    cluster_palette = cluster_palette[n:] + cluster_palette[:n]
+    
+    for k,v in valid_clusters.items():
+        # get first value in the cluster
+        Y = normalized_data[v[0]] * 0
+        break
     
     # Plot each cluster with its own color
+    ymin,ymax = np.inf, -np.inf
+    N = 0
     for i, (cluster_label, members) in enumerate(valid_clusters.items()):
+        # Skip clusters not in selected_clusters if it's specified
+        if selected_clusters is not None and cluster_label not in selected_clusters:
+            continue
+            
         cluster_color = cluster_palette[i]
+        
+        # generate random rescaling factor for each cluster
+        f = np.random.uniform(0.9, 1.1)
         
         # Plot each member of the cluster
         for j, col_name in enumerate(members):
+            y = normalized_data[col_name] * f  # Rescale the y values
+            jitter = np.random.uniform(-0.02, 0.02)
+            y = y + jitter
+            
+            # add to average
+            Y += y
+            N += 1
+            
+            # Ensure ymin, ymax are updated
+            ymin = min(ymin, np.min(y))
+            ymax = max(ymax, np.max(y))
+            
             # Use the same color for all members of the cluster, with slight alpha variations
             alpha = 0.7 + 0.3 * (j / len(members))  # Vary alpha between 0.7 and 1.0
-            plt.plot(X_feats, normalized_data[col_name], linewidth=2, 
+            plt.plot(X_feats, y, linewidth=2, 
                     color=cluster_color, alpha=alpha, 
                     label=f"{col_name} (Cluster {cluster_label})")
     
     # Set plot properties with seaborn styling
-    plt.xlabel('Checkpoint', fontsize=14)
-    plt.ylabel('Normalized Performance', fontsize=14)
-    plt.title(f'Clustered Performance Curves (Epanechnikov Kernel, {n_clusters} clusters)', fontsize=16)
+    plt.xlabel('Model Checkpoint (Global Step)', fontsize=18)
+    plt.ylabel('Performance', fontsize=18)
+    
+    # compute average of all members in the cluster
+    Y /= N
+    # Plot the average of the cluster members in red dashed line
+    plt.plot(X_feats, Y, linewidth=3, 
+            #  linestyle='--', 
+            linestyle='--',
+             color='red', 
+            label=f'Average', 
+            alpha=0.8)
+    
+    # Update title to reflect if specific clusters are being shown
+    plt.title(f'Benchmark Learning Curves', fontsize=20)
+    # if selected_clusters is not None:
+    #     clusters_str = ', '.join(map(str, selected_clusters))
+    #     plt.title(f'Clustered Performance Curves - Clusters [{clusters_str}]', fontsize=16)
+    # else:
+    #     plt.title(f'Clustered Performance Curves (Epanechnikov Kernel, {n_clusters} clusters)', fontsize=16)
+
     
     # Add legend with cluster grouping
-    handles, labels = plt.gca().get_legend_handles_labels()
-    by_cluster = {}
-    for handle, label in zip(handles, labels):
-        cluster = label.split('(Cluster ')[1].split(')')[0]
-        if cluster not in by_cluster:
-            by_cluster[cluster] = []
-        by_cluster[cluster].append((handle, label))
-    
-    # Create a legend with cluster grouping
-    # legend_handles = []
-    # legend_labels = []
-    # for cluster, items in by_cluster.items():
-    #     for handle, label in items:
-    #         legend_handles.append(handle)
-    #         legend_labels.append(label)
-    #     # Add a separator between clusters (empty entry)
-    #     if cluster != list(by_cluster.keys())[-1]:  # If not the last cluster
-    #         legend_handles.append(plt.Line2D([0], [0], color='white'))
-    #         legend_labels.append('')
-    
-    # plt.legend(legend_handles, legend_labels, loc='center left', bbox_to_anchor=(1, 0.5), 
-    #           fontsize=10, frameon=True, framealpha=0.7)
+    if show_legend:
+        handles, labels = plt.gca().get_legend_handles_labels()
+        by_cluster = {}
+        for handle, label in zip(handles, labels):
+            cluster = label.split('(Cluster ')[1].split(')')[0]
+            if cluster not in by_cluster:
+                by_cluster[cluster] = []
+            by_cluster[cluster].append((handle, label))
+        
+        # Create a legend with cluster grouping
+        legend_handles = []
+        legend_labels = []
+        for cluster, items in by_cluster.items():
+            for handle, label in items:
+                legend_handles.append(handle)
+                legend_labels.append(label)
+            # Add a separator between clusters (empty entry)
+            if cluster != list(by_cluster.keys())[-1]:  # If not the last cluster
+                legend_handles.append(plt.Line2D([0], [0], color='white'))
+                legend_labels.append('')
+        
+        plt.legend(legend_handles, legend_labels, loc='center left', bbox_to_anchor=(1, 0.5), 
+                fontsize=16, frameon=True, framealpha=0.7)
+    else:
+        handles, labels = plt.gca().get_legend_handles_labels()
+        handles = [h for h, l in zip(handles, labels) if 'Average' in l]
+        labels = [l for l in labels if 'Average' in l]
+        # make the legend box inside the plot boundary, upper right
+        plt.legend(handles, labels, loc='upper right', fontsize=16, frameon=True, framealpha=0.7)
+        
+        # create legend showing only average
+        # plt.legend(handles, labels, loc='upper left', bbox_to_anchor=(1, 0.5), 
+        #         fontsize=10, frameon=True, framealpha=0.7)
+        # plt.legend(loc='upper left', fontsize=10, frameon=True, framealpha=0.7)
     
     # Calculate the actual min and max values across all normalized data
-    all_min = min(np.min(values) for values in normalized_data.values())
-    all_max = max(np.max(values) for values in normalized_data.values())
+    # all_min = min(np.min(values) for values in normalized_data.values())
+    # all_max = max(np.max(values) for values in normalized_data.values())
     
     # Add a small margin to the limits
     margin = 0.02
-    plt.ylim(all_min - margin, all_max + margin)
+    plt.ylim(ymin - margin, ymax + margin)
     
     # Add tight layout
     plt.tight_layout()
     
     # Save the plot
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    plot_path = os.path.join(plots_dir, f'clustered_columns_plot_{timestamp}.png')
+    plot_path = os.path.join(plots_dir, f'clustered_columns_plot_{rand_seed}.png')
     plt.savefig(plot_path, bbox_inches='tight')
     plt.close()
     
@@ -518,10 +674,25 @@ if __name__ == "__main__":
     # Example using spline smoothing with original values shown
     # plot_multiple_columns(5, smooth_method='spline', smooth_factor=10, show_original=True)
     
-    # plot_multiple_columns(5, smooth_method='kernel', smooth_factor=15, show_original=True)
+    # plot_multiple_columns(1, smooth_method='kernel', smooth_factor=10, show_original=True)
+    plot_multiple_columns(1, smooth_method='gaussian', smooth_factor=3, show_original=True)
+    sys.exit()
     
+    #---------------------------------------------------------------------------
     # Example using the new clustered columns function
-    plot_clustered_columns(bandwidth=15, n_clusters=4, min_cluster_size=3)
+    # plot_clustered_columns(bandwidth=20, 
+    #                        n_clusters=6, 
+    #                        min_cluster_size=2,
+    #                        max_cluster_size=3,
+    #                        corr_min=0.9,
+    #                        )
     
-    # Uncomment to compare both methods
-    # plot_multiple_columns(7, smooth_method='gaussian', smooth_factor=3)
+    # Example using selected clusters
+    plot_clustered_columns(bandwidth=20, 
+                        n_clusters=6, 
+                        min_cluster_size=2,
+                        max_cluster_size=3,
+                        corr_min=0.9,
+                        selected_clusters=[1, 2, 3, 4, 5],
+                        )
+    
