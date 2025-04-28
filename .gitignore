@@ -8,6 +8,7 @@ __pycache__/
 
 # dsv
 *.png
+!docs/*.png
 *.npy
 runs/
 
