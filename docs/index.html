@@ -37,9 +37,9 @@
   
   <p><a href="https://www.xyzeditor.com/">https://www.xyzeditor.com/</a></p>
   
-  <h3 id="learning-curve-optimization">Average Learning Curve Optimization</h3>
+  <h3 id="learning-curve-optimization">(Average) Learning Curve Optimization</h3>
   
-  <p>Problem setup: we have a set of model checkpoints saved periodically during training (usually saved at equally spaced intervals but this is not a requirement). In addition, we have a set of benchmark tasks we can run on a model to get a score. If we chose a single benchmark and ran it on all model checkpoints and then plotted these, with checkpoint number on the x-axis and benchmark score on the y-axis, we would get a <em>learning curve</em> showing how the model improves during training, and then starts to degrade.</p>
+  <p>Problem setup: we have a set of model checkpoints saved periodically during training (usually saved at equally spaced intervals but this is not a requirement). In addition, we have a set of benchmark tasks we can run on a model to get a score. If we chose a single benchmark and ran it on all model checkpoints and then plotted these, with checkpoint number on the x-axis and benchmark score on the y-axis, we would get a <em>learning curve</em> showing how the model improves during training, and then starts to degrade. Typically we are interested in finding the model checkpoint at the peak of this curve. Since the performance data can be noisy, it's often better to maximize a smoothed version (see below left image).</p>
   
   <div style="display: flex; justify-content: space-between; margin: 20px 0;">
     <div style="flex: 1; margin-right: 10px;">
@@ -50,7 +50,7 @@
     </div>
   </div>
   
-  <p>Typically we are interested in finding the model checkpoint at the peak of this curve. If we were to plot the learning curve for every benchmark and then average them, we would get an average learning curve. Ideally we would like to find the model checkpoint that maximizes this curve, because this model performs the best overall on the benchmarks (i.e. has the highest average score - averaged over all benchmarks).</p>
+  <p> If we were to plot the (smoothed) learning curve for every benchmark, we might notice that some of them are very similar to one another, while others are not. If we were to take all of these learning curves, and average them, we would get an average learning curve (above right). Ideally we would like to find the model checkpoint that maximizes the average curve, because this model performs the best overall on the benchmarks (i.e. has the highest average score - averaged over all benchmarks).</p>
   
   <p>However, running a model checkpoint on a benchmark is costly. Suppose that running a single model on a single benchmark takes 1 minute, and we have 100 model checkpoints and 100 benchmark tasks. Running all models on all tasks would take 10000 minutes = 1 week. This case may be rather extreme, but even in less extreme cases we would like to find ways of reliably estimating the best overall model checkpoint without running all model-task pairs.</p>
   
@@ -126,7 +126,7 @@ f_X|O \sim  \mathcal{N}(μ_{X}|O , \Sigma_{X}|O) \\
   
   <p>This \(GP\) model works perfectly well for the case of optimizing the learning curve of a single benchmark. In this current formulation we would say we are looking for the \(i^*\) (i.e. checkpoint model \(x_i^*\)) that maximizes \(\mu_{i}|O\).</p>
   
-  <h4 id="optimizing-average">Optimizing an Average Function over Multiple Outputs</h4>
+  <h3 id="optimizing-average">Optimizing the Average of Multiple Outputs</h3>
 
   <p>But you may recall the objective function we want to maximize is the <em>average learning curve</em> over a set of benchmark tasks. One possible solution might be to fit a separate \(GP\) regression model to each benchmark task, and then average these regression curves afterwards. However, there is almost certainly some relationship (correlation) between many of these learning curves. After all, the benchmark tasks tend to be very similar in nature, in addition to the fact that they are being run on the same set of model checkpoints. Some task pairs may be highly correlated, while others not so much. We would like to be able to share information across similar (correlated) tasks to reduce the number of function evaluations required, but we don't know what these inter-task correlations are <em>a-priori</em>. A multi-task regression method that could jointly estimate these inter-task correlations AND use these correlations to share information between task-specific regression curves would be very useful.</p>
   
