@@ -58,7 +58,7 @@
   <p>Bayesian Optimization (BO for short) is a common approach for such optimization scenarios, when the function we are trying to optimize is expensive to compute. Sometimes it's called "black-box" optimization since we treat the function \(f\) as a "black-box" and only have access to it by querying it's value at specific points. The basic approach is to repeatedly query (i.e. evaluate) the function so as to acquire more sample points with which to estimate a regression model, and then use that regression model to optimize the function. Naturally this process is a loop, the main steps being:</p>
   
 
-  <h4>Main BO Loop</h4>
+  <h4 style="border-bottom: none;">Main BO Loop</h4>
   <ol>
     <li>use the current regression model to decide which point \(x_i\) to query next</li>
     <li>update the regression model using newly observed function value \(y_i=f(x_i)\)</li>
